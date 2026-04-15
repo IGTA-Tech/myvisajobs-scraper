@@ -99,7 +99,7 @@ export function parseEmployerHtml(html: string, url: string): Partial<EmployerDa
   out.topWorkerCountries = parseCountries($, pageText);
 
   // Contacts — the whole point of the exercise
-  out.contacts = parseContacts($, pageText);
+  out.contacts = parseContacts($);
 
   // Work sites
   out.topH1BWorkSites = parseWorkSites(pageText, "H-1B Visa Job Work Sites");
@@ -183,63 +183,57 @@ function parseCountries($: cheerio.CheerioAPI, pageText: string): string | null 
   return parts.length ? parts.join(", ") : null;
 }
 
-function parseContacts($: cheerio.CheerioAPI, pageText: string): Contact[] {
+function parseContacts($: cheerio.CheerioAPI): Contact[] {
   const contacts: Contact[] = [];
-  const seen = new Set<string>();
+  const emailRe = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/;
+  const PREMIUM = "Premium Member Only";
 
-  // Primary approach: look for email addresses in the Contacts section and walk backwards
-  const contactsIdx = pageText.search(/\bContacts\b/);
-  if (contactsIdx < 0) return contacts;
+  // Each <div class="job-location"> holds one contact group (H-1B or Green Card)
+  // with an <h3> label and a <div class="contact-list"> containing .contact-card elements.
+  $(".job-location").each((_, group) => {
+    const $group = $(group);
+    const heading = $group.find("h3").first().text().trim();
+    let type: string | null = null;
+    if (/Green Card/i.test(heading)) type = "Green Card";
+    else if (/H-?1B/i.test(heading)) type = "H1B";
+    else return; // not a contact group — probably an office location block
 
-  const officesIdx = pageText.search(/Office Locations/);
-  const scope = pageText.slice(contactsIdx, officesIdx > contactsIdx ? officesIdx : contactsIdx + 5000);
+    $group.find(".contact-card").each((_, card) => {
+      if (contacts.length >= 10) return false;
+      const $card = $(card);
 
-  // Extract all emails in the contacts section
-  const emailRe = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
-  const emails = Array.from(new Set(scope.match(emailRe) ?? []));
+      // Name + title from .contact-summary
+      const $summary = $card.find(".contact-summary").first();
+      const name = text($summary.find("strong").first().text()) ?? null;
+      const summaryText = $summary.text().replace(/\s+/g, " ").trim();
+      let title: string | null = null;
+      const dashIdx = summaryText.indexOf(" - ");
+      if (name && dashIdx >= 0) {
+        const after = summaryText.slice(dashIdx + 3).replace(/\[[-+]?\]/g, "").trim();
+        if (after && !/^Premium/i.test(after)) title = after;
+      }
 
-  // For each email, try to find the nearest preceding name block
-  const blocks = scope.split(/(?=[A-Z][a-z]+ [A-Z]\b|[A-Z][a-z]+ [A-Z][a-z]+)/);
+      // Details: address, phone, email from .contact-details
+      const $details = $card.find(".contact-details").first();
+      const detailsText = $details.text().replace(/\s+/g, " ").trim();
 
-  // Fallback: naive block-based parsing from cheerio structure
-  // Look for patterns like "Name - Title" or "Name" followed by address/phone/email
-  const blockRe =
-    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,3})\s*(?:-\s*([^\n[]+?))?\s*(?:\[[-+]\])?\s*(?:([\d .,()\-x+]{7,30})\s*Phone:?\s*)?(?:Phone:\s*([^\n]+?))?\s*(?:Email:\s*([\w.+-]+@[\w.-]+))?/g;
+      // Phone — capture after "Phone:" up to "Email:" or end
+      let phone: string | null = null;
+      const phoneMatch = detailsText.match(/Phone:\s*(.*?)(?:\s*Email:|$)/i);
+      if (phoneMatch) {
+        const raw = phoneMatch[1].trim();
+        if (raw && !raw.includes(PREMIUM)) phone = raw;
+      }
 
-  // Simpler approach: split scope on email occurrences and grab name before each
-  const segments = scope.split(/Email:\s*/);
-  for (let i = 1; i < segments.length; i++) {
-    const prev = segments[i - 1];
-    const emailPart = segments[i];
-    const email = emailPart.match(emailRe)?.[0];
-    if (!email || seen.has(email)) continue;
-    seen.add(email);
+      // Email — prefer a real email in the details section
+      let email: string | null = null;
+      const emailMatch = detailsText.match(emailRe);
+      if (emailMatch) email = emailMatch[0];
+      else if (detailsText.includes(PREMIUM)) email = null;
 
-    // Walk back in prev to find name + title
-    const tail = prev.slice(-500);
-    const nameMatch = tail.match(
-      /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]*){1,3})\s*(?:-\s*([^\n[]+?))?\s*\[[-+]?\]/,
-    );
-    const phoneMatch = tail.match(/Phone:\s*([^\n]+?)(?:\s*Email|\s*$)/i);
-    const titleLoose = tail.match(/([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]*){1,3})\s*-\s*([^[\n]+?)\s*\[/);
-
-    contacts.push({
-      name: nameMatch?.[1]?.trim() ?? titleLoose?.[1]?.trim() ?? null,
-      title: nameMatch?.[2]?.trim() ?? titleLoose?.[2]?.trim() ?? null,
-      email,
-      phone: phoneMatch?.[1]?.trim() ?? null,
-      type: /Green Card/i.test(prev.slice(-1500)) ? "Green Card" : "H1B",
+      contacts.push({ name, title, email, phone, type });
     });
-
-    if (contacts.length >= 10) break;
-  }
-
-  // If we got no contacts but found emails, return one per email with minimal info
-  if (contacts.length === 0 && emails.length) {
-    for (const email of emails.slice(0, 10)) {
-      contacts.push({ name: null, title: null, email, phone: null, type: null });
-    }
-  }
+  });
 
   return contacts;
 }

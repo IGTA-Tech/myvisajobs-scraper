@@ -1,9 +1,14 @@
 import { logger, task } from "@trigger.dev/sdk";
-import { fetchEmployerPage, RateLimitError } from "../lib/fetcher.js";
+import {
+  fetchEmployerPage,
+  RateLimitError,
+  CookieExpiredError,
+  isLoggedOut,
+} from "../lib/fetcher.js";
 import { parseEmployerHtml } from "../lib/parser.js";
 import { EmployerDataSchema, isParseHealthy, EnrichedEmployer } from "../lib/schema.js";
 import { extractWithAI, enrichWithAI } from "../lib/anthropic.js";
-import { appendEmployer, appendFailed } from "../lib/sheets.js";
+import { appendEmployer, appendFailed, updateDashboard } from "../lib/sheets.js";
 import { sendTelegramAlert } from "../lib/telegram.js";
 
 export type ScrapeResult = {
@@ -42,6 +47,17 @@ export const scrapeEmployer = task({
         );
       }
       throw err;
+    }
+
+    // Cookie expiry detection — if the response still shows the "Premium Member Only"
+    // placeholder in contact details, the session cookie is dead (or not set).
+    if (isLoggedOut(html)) {
+      await sendTelegramAlert(
+        "critical",
+        "MyVisaJobs cookie expired",
+        `Response shows logged-out content — emails/phones are gated behind premium.\n\nFix: log in to myvisajobs.com, copy a fresh session cookie, update MYVISAJOBS_COOKIE in Trigger.dev env vars, redeploy.`,
+      );
+      throw new CookieExpiredError();
     }
 
     // Tier 1: cheerio
@@ -87,6 +103,15 @@ export const scrapeEmployer = task({
     // Write
     const rowNumber = await appendEmployer(data, addedBy);
     logger.info("Wrote employer", { url, rowNumber, tier, company: data.companyName });
+
+    // Per-row dashboard log — one entry per scraped employer so individual runs
+    // (including direct test-runs) show up in the Dashboard tab.
+    await updateDashboard({
+      scrapedToday: 1,
+      scrapedTotal: 1,
+      lastRun: new Date().toISOString(),
+      lastRunStatus: `ok (${tier}) ${data.companyName}`,
+    });
 
     return {
       url,
