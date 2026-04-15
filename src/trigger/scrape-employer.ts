@@ -1,4 +1,4 @@
-import { logger, task } from "@trigger.dev/sdk/v3";
+import { logger, task } from "@trigger.dev/sdk";
 import { fetchEmployerPage, RateLimitError } from "../lib/fetcher.js";
 import { parseEmployerHtml } from "../lib/parser.js";
 import { EmployerDataSchema, isParseHealthy, EnrichedEmployer } from "../lib/schema.js";

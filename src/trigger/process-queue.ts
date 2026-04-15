@@ -1,4 +1,4 @@
-import { logger, schedules, tasks } from "@trigger.dev/sdk/v3";
+import { logger, schedules, tasks } from "@trigger.dev/sdk";
 import { CONFIG } from "../lib/config.js";
 import {
   readQueue,

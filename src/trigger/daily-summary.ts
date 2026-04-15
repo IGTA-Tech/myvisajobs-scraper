@@ -1,4 +1,4 @@
-import { logger, schedules } from "@trigger.dev/sdk/v3";
+import { logger, schedules } from "@trigger.dev/sdk";
 import { CONFIG } from "../lib/config.js";
 import { getDashboardSummaryForToday } from "../lib/sheets.js";
 import { sendTelegramAlert } from "../lib/telegram.js";
