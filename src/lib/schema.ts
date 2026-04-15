@@ -49,6 +49,8 @@ export const EmployerDataSchema = z.object({
   averageReviewScore: z.number().nullable().default(null),
   positiveReviewKeywords: z.string().nullable().default(null),
   negativeReviewKeywords: z.string().nullable().default(null),
+  discoverySource: z.string().nullable().default(null),
+  discoveryNotes: z.string().nullable().default(null),
 });
 export type EmployerData = z.infer<typeof EmployerDataSchema>;
 

@@ -17,4 +17,5 @@ export const CONFIG = {
   SONNET_MODEL: "claude-sonnet-4-5",
   OPENAI_MODEL: "gpt-4o-mini",
   TIMEZONE: "Africa/Lagos",
+  MAX_DISCOVERY_APPEND: 500,
 } as const;

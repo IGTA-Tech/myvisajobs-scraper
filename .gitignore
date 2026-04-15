@@ -12,3 +12,4 @@ build/
 .idea/
 service-account.json
 *.pem
+scripts/read-headers.mjs

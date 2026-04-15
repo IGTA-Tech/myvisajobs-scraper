@@ -32,22 +32,33 @@ export type QueueRow = {
   rowNumber: number;
   url: string;
   status: string;
+  discoverySource: string | null;
+  discoveryNotes: string | null;
 };
 
-/** Read pending URLs from Queue tab. Tab expects columns: URL | Status | Error | ProcessedAt */
+/**
+ * Read pending URLs from Queue tab.
+ * Queue columns: A=URL | B=Status | C=Error | D=ProcessedAt | E=Discovery_Source | F=Discovery_Notes
+ */
 export async function readQueue(limit: number): Promise<QueueRow[]> {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId(),
-    range: `${CONFIG.SHEET_TAB_QUEUE}!A2:D`,
+    range: `${CONFIG.SHEET_TAB_QUEUE}!A2:F`,
   });
   const rows = res.data.values ?? [];
   const pending: QueueRow[] = [];
   for (let i = 0; i < rows.length; i++) {
-    const [url, status] = rows[i] ?? [];
+    const [url, status, , , source, notes] = rows[i] ?? [];
     const s = (status ?? "").toString().trim().toLowerCase();
     if (url && (s === "" || s === "pending")) {
-      pending.push({ rowNumber: i + 2, url: url.toString().trim(), status: s });
+      pending.push({
+        rowNumber: i + 2,
+        url: url.toString().trim(),
+        status: s,
+        discoverySource: source ? String(source).trim() : null,
+        discoveryNotes: notes ? String(notes).trim() : null,
+      });
       if (pending.length >= limit) break;
     }
   }
@@ -66,6 +77,43 @@ export async function updateQueueRow(
     valueInputOption: "RAW",
     requestBody: { values: [[status, error ?? "", new Date().toISOString()]] },
   });
+}
+
+/** Returns set of MyVisaJobs URLs already in the Queue tab (any status). */
+export async function getQueuedUrls(): Promise<Set<string>> {
+  const sheets = getSheets();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_QUEUE}!A2:A`,
+  });
+  const rows = res.data.values ?? [];
+  const out = new Set<string>();
+  for (const r of rows) {
+    const v = r?.[0];
+    if (v) out.add(v.toString().trim().toLowerCase());
+  }
+  return out;
+}
+
+export type QueueAppendRow = {
+  url: string;
+  discoverySource: string;
+  discoveryNotes: string;
+};
+
+/** Appends new URLs to the Queue tab with pending status and discovery metadata. */
+export async function appendToQueue(items: QueueAppendRow[]): Promise<number> {
+  if (items.length === 0) return 0;
+  const sheets = getSheets();
+  const rows = items.map((i) => [i.url, "pending", "", "", i.discoverySource, i.discoveryNotes]);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_QUEUE}!A:F`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: rows },
+  });
+  return items.length;
 }
 
 /** Returns set of MyVisaJobs URLs already in the leads sheet. */
@@ -190,6 +238,10 @@ function buildRow(data: EnrichedEmployer, addedBy: string): (string | number)[] 
 
   set("Last_Updated", now);
   set("Updated_By", addedBy);
+
+  // Discovery metadata (columns FD/FE)
+  set("Discovery_Source", data.discoverySource);
+  set("Discovery_Notes", data.discoveryNotes);
 
   return row;
 }

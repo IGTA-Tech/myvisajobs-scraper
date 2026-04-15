@@ -60,7 +60,12 @@ export const processQueue = schedules.task({
           await sleep(jitterDelay());
           const handle = await tasks.triggerAndWait<typeof scrapeEmployer>(
             "myvisajobs.scrape-employer",
-            { url: row.url, addedBy: "scheduled" },
+            {
+              url: row.url,
+              addedBy: "Sherrod",
+              discoverySource: row.discoverySource,
+              discoveryNotesPrefix: row.discoveryNotes,
+            },
           );
           if (handle.ok) {
             results.push({ row, result: handle.output });

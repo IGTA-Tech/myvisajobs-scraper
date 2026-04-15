@@ -20,6 +20,13 @@ export type ScrapeResult = {
   error?: string;
 };
 
+export type ScrapePayload = {
+  url: string;
+  addedBy?: string;
+  discoverySource?: string | null;
+  discoveryNotesPrefix?: string | null;
+};
+
 export const scrapeEmployer = task({
   id: "myvisajobs.scrape-employer",
   queue: { concurrencyLimit: 5 },
@@ -30,10 +37,12 @@ export const scrapeEmployer = task({
     maxTimeoutInMs: 15000,
     factor: 2,
   },
-  run: async (payload: { url: string; addedBy?: string }): Promise<ScrapeResult> => {
+  run: async (payload: ScrapePayload): Promise<ScrapeResult> => {
     const { url } = payload;
-    const addedBy = payload.addedBy ?? "trigger.dev";
-    logger.info("Scraping employer", { url });
+    const addedBy = payload.addedBy ?? "Sherrod";
+    const discoverySource = payload.discoverySource ?? "manual";
+    const discoveryNotesPrefix = payload.discoveryNotesPrefix ?? null;
+    logger.info("Scraping employer", { url, discoverySource });
 
     let html: string;
     try {
@@ -100,6 +109,10 @@ export const scrapeEmployer = task({
       logger.warn("Enrichment failed, writing without it", { url, err });
     }
 
+    // Build final discovery notes (rich, post-enrichment)
+    data.discoverySource = discoverySource;
+    data.discoveryNotes = buildDiscoveryNotes(data, discoveryNotesPrefix);
+
     // Write
     const rowNumber = await appendEmployer(data, addedBy);
     logger.info("Wrote employer", { url, rowNumber, tier, company: data.companyName });
@@ -122,3 +135,71 @@ export const scrapeEmployer = task({
     };
   },
 });
+
+/**
+ * Composes a rich Discovery_Notes string combining the discovery metadata
+ * (timestamp, source, position) with useful company/job insight from the
+ * AI enrichment step. Falls back gracefully if fields are missing.
+ */
+function buildDiscoveryNotes(
+  data: EnrichedEmployer,
+  prefix: string | null,
+): string {
+  const parts: string[] = [];
+
+  // Metadata line
+  if (prefix) parts.push(prefix);
+  else
+    parts.push(
+      `${formatLagosTime(new Date())} · manual entry`,
+    );
+
+  // Company profile line
+  const profile: string[] = [];
+  if (data.companyName) profile.push(data.companyName);
+  const loc = [data.mainOfficeCity, data.mainOfficeState].filter(Boolean).join(", ");
+  if (loc) profile.push(`(${loc}${data.numberOfEmployees ? `, ${data.numberOfEmployees} employees` : ""})`);
+  if (data.naicsIndustry) profile.push(`— ${data.naicsIndustry}`);
+  if (data.visaRank) profile.push(`· visa rank #${data.visaRank}`);
+  if (profile.length) parts.push(profile.join(" "));
+
+  // Volume / salary line
+  const vol: string[] = [];
+  if (data.h1bLCACurrent != null) vol.push(`${data.h1bLCACurrent} H-1B LCAs current FY`);
+  if (data.gcLCCurrent != null && data.gcLCCurrent > 0) vol.push(`${data.gcLCCurrent} GC LCs`);
+  if (data.avgH1BSalaryCurrent) vol.push(`avg $${data.avgH1BSalaryCurrent.toLocaleString()}`);
+  if (vol.length) parts.push(vol.join(", "));
+
+  // Top roles line
+  const roles = [
+    data.topSponsoredRole1 ? `${data.topSponsoredRole1}${data.topSponsoredRole1Count ? ` (${data.topSponsoredRole1Count})` : ""}` : null,
+    data.topSponsoredRole2 ? `${data.topSponsoredRole2}${data.topSponsoredRole2Count ? ` (${data.topSponsoredRole2Count})` : ""}` : null,
+    data.topSponsoredRole3 ? `${data.topSponsoredRole3}${data.topSponsoredRole3Count ? ` (${data.topSponsoredRole3Count})` : ""}` : null,
+  ].filter(Boolean);
+  if (roles.length) parts.push(`Top sponsored roles: ${roles.join("; ")}`);
+
+  // Worker countries
+  if (data.topWorkerCountries) parts.push(`Worker origins: ${data.topWorkerCountries}`);
+
+  // AI insight
+  const aiBits: string[] = [];
+  if (data.targetPriority) aiBits.push(`Priority ${data.targetPriority}`);
+  if (data.sponsorshipLikelihood) aiBits.push(data.sponsorshipLikelihood);
+  if (data.aiEmployerScore != null) aiBits.push(`AI score ${data.aiEmployerScore}/100`);
+  if (aiBits.length) parts.push(`[${aiBits.join(" · ")}]`);
+  if (data.aiEvaluationNotes) parts.push(data.aiEvaluationNotes);
+
+  return parts.join("\n");
+}
+
+function formatLagosTime(d: Date): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "Africa/Lagos",
+    }).format(d) + " WAT";
+  } catch {
+    return d.toISOString();
+  }
+}

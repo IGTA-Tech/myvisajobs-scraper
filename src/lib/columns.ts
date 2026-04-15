@@ -39,6 +39,9 @@ export const LEAD_COLUMNS: string[] = (() => {
     "Internal_Notes", "Conversation_History", "Red_Flags", "Green_Flags", "Partnership_Probability",
     "Data_Quality_Score", "Last_Updated", "Updated_By", "Tags",
     "Message_Subject", "Message_Body", "Generated_Date", "Message_Status", "Sent_Date", "Message_Response_Received",
+    // New discovery metadata columns (positions 160/161, letters FD/FE).
+    // Must be added manually as headers in row 1 of IA_Employer_Leads before first run.
+    "Discovery_Source", "Discovery_Notes",
   );
   return cols;
 })();
