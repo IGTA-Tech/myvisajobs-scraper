@@ -1,0 +1,14 @@
+node_modules/
+.claude/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.trigger/
+dist/
+build/
+.vscode/
+.idea/
+service-account.json
+*.pem

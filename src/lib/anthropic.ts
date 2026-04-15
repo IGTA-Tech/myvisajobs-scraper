@@ -1,0 +1,214 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { CONFIG } from "./config.js";
+import {
+  EmployerData,
+  EmployerDataSchema,
+  Enrichment,
+  EnrichmentSchema,
+} from "./schema.js";
+import { extractWithOpenAI, enrichWithOpenAI } from "./openai.js";
+
+let client: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (!client) {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
+    client = new Anthropic({ apiKey });
+  }
+  return client;
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractJson(content: string): string {
+  let c = content.trim();
+  if (c.startsWith("```")) {
+    c = c.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+  }
+  const first = c.indexOf("{");
+  const last = c.lastIndexOf("}");
+  if (first >= 0 && last > first) return c.slice(first, last + 1);
+  return c;
+}
+
+const EXTRACT_SYSTEM = `You extract employer visa sponsorship data from MyVisaJobs pages. Return ONLY a JSON object. No markdown, no commentary.`;
+
+function extractPrompt(cleanedText: string, url: string): string {
+  return `Extract employer data from this MyVisaJobs page text. URL: ${url}
+
+Return a JSON object with these exact keys (use null for missing values, NOT strings):
+
+{
+  "companyName": string,
+  "myVisaJobsUrl": "${url}",
+  "verificationStatus": "Verified" | "Not Verified" | null,
+  "visaRank": number | null,
+  "totalH1BLCAs3yr": number | null,
+  "totalGCLCs3yr": number | null,
+  "totalDeniedWithdrawn3yr": number | null,
+  "mainOfficeAddress": string | null,
+  "mainOfficeCity": string | null,
+  "mainOfficeState": string | null,
+  "mainOfficeZip": string | null,
+  "foundedYear": number | null,
+  "numberOfEmployees": number | null,
+  "naicsIndustry": string | null,
+  "h1bDependent": "Yes" | "No" | "Unknown" | null,
+  "willfulViolator": "Yes" | "No" | "Unknown" | null,
+  "h1bLCACurrent": number | null,
+  "h1bLCALastYear": number | null,
+  "h1bLCA2YearsAgo": number | null,
+  "gcLCCurrent": number | null,
+  "gcLCLastYear": number | null,
+  "gcLC2YearsAgo": number | null,
+  "avgH1BSalaryCurrent": number | null,
+  "avgGCSalaryCurrent": number | null,
+  "topSponsoredRole1": string | null,
+  "topSponsoredRole1Count": number | null,
+  "topSponsoredRole2": string | null,
+  "topSponsoredRole2Count": number | null,
+  "topSponsoredRole3": string | null,
+  "topSponsoredRole3Count": number | null,
+  "otherSponsoredRoles": string | null,
+  "topWorkerCountries": string | null,
+  "contacts": [{"name": string|null, "title": string|null, "email": string|null, "phone": string|null, "type": "H1B"|"Green Card"|null}],
+  "topH1BWorkSites": string | null,
+  "topGCWorkSites": string | null,
+  "reviewCount": number | null,
+  "averageReviewScore": number | null,
+  "positiveReviewKeywords": string | null,
+  "negativeReviewKeywords": string | null
+}
+
+CRITICAL: Extract EVERY unique email from contacts sections (both H-1B and Green Card). Each unique email = one contact. Max 10 contacts.
+
+PAGE TEXT:
+${cleanedText.slice(0, 40000)}
+
+Return ONLY the JSON object.`;
+}
+
+async function callClaude(
+  model: string,
+  system: string,
+  userContent: string,
+  maxTokens: number,
+): Promise<string> {
+  const res = await getClient().messages.create({
+    model,
+    max_tokens: maxTokens,
+    system,
+    messages: [{ role: "user", content: userContent }],
+  });
+  const block = res.content.find((b) => b.type === "text");
+  if (!block || block.type !== "text") throw new Error("No text response from Claude");
+  return block.text;
+}
+
+/**
+ * Tier 3/4 extraction fallback. Tries Haiku first, then Sonnet.
+ * Returns validated EmployerData or throws.
+ */
+export async function extractWithAI(
+  html: string,
+  url: string,
+): Promise<{ data: EmployerData; tier: "haiku" | "sonnet" | "openai" }> {
+  const cleaned = stripHtml(html);
+  const prompt = extractPrompt(cleaned, url);
+
+  // Tier 3 — Haiku
+  try {
+    const raw = await callClaude(CONFIG.HAIKU_MODEL, EXTRACT_SYSTEM, prompt, 4000);
+    const parsed = JSON.parse(extractJson(raw));
+    const validated = EmployerDataSchema.safeParse(parsed);
+    if (validated.success) return { data: validated.data, tier: "haiku" };
+  } catch {
+    // fall through to Sonnet
+  }
+
+  // Tier 4 — Sonnet
+  try {
+    const raw = await callClaude(CONFIG.SONNET_MODEL, EXTRACT_SYSTEM, prompt, 4000);
+    const parsed = JSON.parse(extractJson(raw));
+    const validated = EmployerDataSchema.safeParse(parsed);
+    if (validated.success) return { data: validated.data, tier: "sonnet" };
+  } catch {
+    // fall through to OpenAI
+  }
+
+  // Tier 5 — OpenAI (cross-provider final fallback — billing/outage safety net)
+  const data = await extractWithOpenAI(html, url);
+  return { data, tier: "openai" };
+}
+
+const ENRICH_SYSTEM = `You are an expert in visa sponsorship and employer analysis. Return ONLY a JSON object.`;
+
+function enrichmentPrompt(data: EmployerData): string {
+  return `Analyze this employer and return enrichment JSON.
+
+EMPLOYER DATA:
+${JSON.stringify(data, null, 2)}
+
+Return ONLY this JSON structure:
+
+{
+  "industryCategory": "Tech|Finance|Healthcare|Consulting|etc",
+  "companySizeEstimate": string,
+  "sponsorO1Visas": "Yes|No|Likely|Unknown",
+  "sponsorshipTrend": "Increasing|Stable|Decreasing|New",
+  "h1bApprovalRateCurrent": number|null,
+  "h1bApprovalRateHistorical": number|null,
+  "aiEmployerScore": number (0-100),
+  "sponsorshipLikelihood": "Hot|Warm|Cold",
+  "targetPriority": "A|B|C|D",
+  "bestVisaTypes": "H1B,O1,EB1A,L1",
+  "candidateMatchPotential": "High|Medium|Low",
+  "partnershipOpportunity": "Direct Hiring|Petitioner Service|Education|None",
+  "decisionMakerAccessibility": "Easy|Medium|Hard",
+  "aiEvaluationNotes": "2-3 sentence insight"
+}
+
+SCORING:
+- Rank 1-100 = 90-100, 101-500 = 70-89, 501-1000 = 50-69, 1000+ = 30-49
+- Bonuses for: volume, approval rate, increasing trend, high salary, multiple contacts
+
+PRIORITY:
+- A: score 70+, rank <500, Hot
+- B: score 50-69, rank 500-1000, Warm
+- C: score 30-49, rank 1000-2000, Cold
+- D: score <30, rank 2000+`;
+}
+
+/**
+ * Enrichment with Haiku -> Sonnet fallback. If both fail, returns empty enrichment.
+ */
+export async function enrichWithAI(data: EmployerData): Promise<Enrichment> {
+  const prompt = enrichmentPrompt(data);
+
+  try {
+    const raw = await callClaude(CONFIG.HAIKU_MODEL, ENRICH_SYSTEM, prompt, 1500);
+    const parsed = JSON.parse(extractJson(raw));
+    return EnrichmentSchema.parse(parsed);
+  } catch {
+    try {
+      const raw = await callClaude(CONFIG.SONNET_MODEL, ENRICH_SYSTEM, prompt, 1500);
+      const parsed = JSON.parse(extractJson(raw));
+      return EnrichmentSchema.parse(parsed);
+    } catch {
+      // Cross-provider final fallback — OpenAI
+      try {
+        return await enrichWithOpenAI(data);
+      } catch {
+        return EnrichmentSchema.parse({});
+      }
+    }
+  }
+}

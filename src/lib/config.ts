@@ -1,0 +1,20 @@
+export const CONFIG = {
+  BATCH_SIZE: 50,
+  CONCURRENCY: 5,
+  REQUEST_DELAY_MIN_MS: 2000,
+  REQUEST_DELAY_MAX_MS: 4000,
+  CIRCUIT_BREAKER_THRESHOLD: 0.20,
+  RATE_LIMIT_PAUSE_MS: 10 * 60 * 1000,
+  MAX_CONTACTS_PER_EMPLOYER: 10,
+  USER_AGENT:
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  SHEET_TAB_LEADS: "IA_Employer_Leads",
+  SHEET_TAB_QUEUE: "Queue",
+  SHEET_TAB_DASHBOARD: "Dashboard",
+  SHEET_TAB_FAILED: "Failed",
+  SHEET_TAB_CONTROL: "Control",
+  HAIKU_MODEL: "claude-haiku-4-5-20251001",
+  SONNET_MODEL: "claude-sonnet-4-5",
+  OPENAI_MODEL: "gpt-4o-mini",
+  TIMEZONE: "Africa/Lagos",
+} as const;
