@@ -5,10 +5,17 @@ import {
   CookieExpiredError,
   isLoggedOut,
 } from "../lib/fetcher.js";
-import { parseEmployerHtml } from "../lib/parser.js";
+import { parseEmployerHtml, extractRelatedEmployers } from "../lib/parser.js";
 import { EmployerDataSchema, isParseHealthy, EnrichedEmployer } from "../lib/schema.js";
 import { extractWithAI, enrichWithAI } from "../lib/anthropic.js";
-import { appendEmployer, appendFailed, updateDashboard } from "../lib/sheets.js";
+import {
+  appendEmployer,
+  appendFailed,
+  updateDashboard,
+  appendToQueue,
+  getExistingUrls,
+  getQueuedUrls,
+} from "../lib/sheets.js";
 import { sendTelegramAlert } from "../lib/telegram.js";
 
 export type ScrapeResult = {
@@ -125,6 +132,42 @@ export const scrapeEmployer = task({
       lastRun: new Date().toISOString(),
       lastRunStatus: `ok (${tier}) ${data.companyName}`,
     });
+
+    // Graph-traversal discovery: feed "Related & Recommended Employers"
+    // from this page back into the Queue so the scraper self-propagates
+    // through the employer graph. Best-effort — any failure here must
+    // not fail the scrape itself.
+    try {
+      const related = extractRelatedEmployers(html, url);
+      if (related.length > 0) {
+        const [existing, queued] = await Promise.all([
+          getExistingUrls(),
+          getQueuedUrls(),
+        ]);
+        const seen = new Set<string>([...existing, ...queued]);
+        const parentSlug =
+          url.match(/\/employer\/([a-z0-9-]+)\/?$/i)?.[1] ?? "unknown";
+        const newItems = related
+          .filter((u) => !seen.has(u.toLowerCase()))
+          .slice(0, 15)
+          .map((u) => ({
+            url: u,
+            discoverySource: `related_from:${parentSlug}`,
+            discoveryNotes: `Discovered via "Related & Recommended Employers" section on ${url} (parent: ${data.companyName ?? parentSlug})`,
+          }));
+        if (newItems.length > 0) {
+          await appendToQueue(newItems);
+          logger.info("Queued related employers", {
+            parent: parentSlug,
+            added: newItems.length,
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn("Related-employer discovery failed (non-fatal)", {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     return {
       url,

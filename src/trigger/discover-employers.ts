@@ -11,7 +11,6 @@ import {
 } from "../lib/sheets.js";
 import { fetchEmployerPage, RateLimitError, isLoggedOut, sleep } from "../lib/fetcher.js";
 import { sendTelegramAlert } from "../lib/telegram.js";
-import { US_STATES } from "../lib/states.js";
 
 const BASE = "https://www.myvisajobs.com";
 
@@ -21,38 +20,26 @@ type DiscoverySourceDef = {
   humanLabel: string;
 };
 
-function buildSources(): DiscoverySourceDef[] {
-  const sources: DiscoverySourceDef[] = [
-    {
-      url: `${BASE}/reports/h1b/`,
-      tag: "top_h1b_sponsors",
-      humanLabel: "Top H-1B Visa Sponsors ranking",
-    },
-    {
-      url: `${BASE}/reports/green-card.aspx`,
-      tag: "top_gc_sponsors",
-      humanLabel: "Top Green Card Sponsors ranking",
-    },
-  ];
-
-  // Phase 2: per-state rankings (H1B + GC) — adds 100 source URLs
-  for (const s of US_STATES) {
-    sources.push({
-      url: `${BASE}/reports/h1b/state/${s.slug}/`,
-      tag: `state_h1b:${s.slug}`,
-      humanLabel: `Top H-1B Sponsors in ${s.label}`,
-    });
-    sources.push({
-      url: `${BASE}/reports/green-card/state/${s.slug}/`,
-      tag: `state_gc:${s.slug}`,
-      humanLabel: `Top Green Card Sponsors in ${s.label}`,
-    });
-  }
-
-  return sources;
-}
-
-const SOURCES: DiscoverySourceDef[] = buildSources();
+// Confirmed working discovery sources. State/industry URLs were rejected —
+// they silently echo the national top-100. Broader discovery happens
+// organically via related-employer graph traversal inside scrape-employer.
+const SOURCES: DiscoverySourceDef[] = [
+  {
+    url: `${BASE}/reports/h1b/`,
+    tag: "top_h1b_sponsors",
+    humanLabel: "Top H-1B Visa Sponsors ranking",
+  },
+  {
+    url: `${BASE}/reports/green-card.aspx`,
+    tag: "top_gc_sponsors",
+    humanLabel: "Top Green Card Sponsors ranking",
+  },
+  {
+    url: `${BASE}/h1b/cap-exempt-employers`,
+    tag: "cap_exempt",
+    humanLabel: "Cap-Exempt H-1B Employers (universities, nonprofits, research)",
+  },
+];
 
 function normalizeEmployerUrl(href: string): string | null {
   const m = href.match(/^\/employer\/([a-z0-9-]+)\/?$/i);

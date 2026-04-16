@@ -304,3 +304,26 @@ export function parseAndValidate(html: string, url: string): EmployerData | null
   const result = EmployerDataSchema.safeParse(raw);
   return result.success ? result.data : null;
 }
+
+/**
+ * Extract "Related & Recommended Employers" URLs from a scraped employer page.
+ * These form the graph-traversal discovery source — each scraped employer
+ * yields 10-15 related employer URLs to queue.
+ */
+export function extractRelatedEmployers(html: string, selfUrl: string): string[] {
+  const $ = cheerio.load(html);
+  const out = new Set<string>();
+  const selfSlug = selfUrl.match(/\/employer\/([a-z0-9-]+)\/?$/i)?.[1]?.toLowerCase();
+
+  $('a[href*="/employer/"]').each((_, el) => {
+    const href = $(el).attr("href");
+    if (!href) return;
+    const m = href.match(/^\/employer\/([a-z0-9-]+)\/?$/i);
+    if (!m) return;
+    const slug = m[1].toLowerCase();
+    if (slug === selfSlug) return;
+    out.add(`https://www.myvisajobs.com/employer/${slug}/`);
+  });
+
+  return Array.from(out);
+}
