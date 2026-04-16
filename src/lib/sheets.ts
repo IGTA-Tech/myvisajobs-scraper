@@ -1,4 +1,5 @@
-import { google, sheets_v4 } from "googleapis";
+import { sheets as sheetsApi, sheets_v4 } from "@googleapis/sheets";
+import { JWT } from "google-auth-library";
 import { CONFIG } from "./config.js";
 import { LEAD_COLUMNS, colIndex } from "./columns.js";
 import { EnrichedEmployer } from "./schema.js";
@@ -13,12 +14,12 @@ function getSheets(): sheets_v4.Sheets {
     ? trimmed
     : Buffer.from(trimmed, "base64").toString("utf8");
   const creds = JSON.parse(decoded);
-  const auth = new google.auth.JWT({
+  const auth = new JWT({
     email: creds.client_email,
     key: creds.private_key,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
-  sheetsClient = google.sheets({ version: "v4", auth });
+  sheetsClient = sheetsApi({ version: "v4", auth });
   return sheetsClient;
 }
 
