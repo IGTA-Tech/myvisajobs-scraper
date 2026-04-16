@@ -7,9 +7,8 @@ import {
   updateDashboard,
   isPaused,
 } from "../lib/sheets.js";
-import { scrapeEmployer, ScrapeResult } from "./scrape-employer.js";
+import { scrapeEmployer } from "./scrape-employer.js";
 import { sendTelegramAlert } from "../lib/telegram.js";
-import { sleep, jitterDelay } from "../lib/fetcher.js";
 
 export const processQueue = schedules.task({
   id: "myvisajobs.process-queue",
@@ -51,53 +50,44 @@ export const processQueue = schedules.task({
     let aiFallback = 0;
     const duplicates = pending.length - toProcess.length;
 
-    // Bound parallelism ourselves via a simple worker pool over triggerAndWait.
-    const results: Array<{ row: (typeof toProcess)[number]; result?: ScrapeResult; err?: string }> = [];
+    // Trigger.dev v4 forbids Promise.all around triggerAndWait. Use
+    // batchTriggerAndWait to spawn all child runs and collect results.
+    // Parallelism is bounded by the scrape-employer queue.concurrencyLimit (5).
+    const batchItems = toProcess.map((row) => ({
+      payload: {
+        url: row.url,
+        addedBy: "Sherrod",
+        discoverySource: row.discoverySource,
+        discoveryNotesPrefix: row.discoveryNotes,
+      },
+    }));
 
-    const worker = async (items: typeof toProcess) => {
-      for (const row of items) {
-        try {
-          await sleep(jitterDelay());
-          const handle = await tasks.triggerAndWait<typeof scrapeEmployer>(
-            "myvisajobs.scrape-employer",
-            {
-              url: row.url,
-              addedBy: "Sherrod",
-              discoverySource: row.discoverySource,
-              discoveryNotesPrefix: row.discoveryNotes,
-            },
-          );
-          if (handle.ok) {
-            results.push({ row, result: handle.output });
-          } else {
-            const errMsg =
-              handle.error && typeof handle.error === "object" && "message" in handle.error
-                ? String((handle.error as { message: unknown }).message)
-                : String(handle.error ?? "unknown");
-            results.push({ row, err: errMsg });
-          }
-        } catch (err) {
-          results.push({ row, err: err instanceof Error ? err.message : String(err) });
-        }
-      }
-    };
-
-    const chunks: Array<typeof toProcess> = Array.from(
-      { length: CONFIG.CONCURRENCY },
-      () => [],
+    const batch = await tasks.batchTriggerAndWait<typeof scrapeEmployer>(
+      "myvisajobs.scrape-employer",
+      batchItems,
     );
-    toProcess.forEach((item, i) => chunks[i % CONFIG.CONCURRENCY].push(item));
-    await Promise.all(chunks.map(worker));
 
-    for (const { row, result, err } of results) {
-      if (err || !result?.success) {
+    for (let i = 0; i < batch.runs.length; i++) {
+      const row = toProcess[i];
+      const run = batch.runs[i];
+      if (run.ok) {
+        scraped++;
+        const tier = run.output.tier;
+        if (tier === "haiku" || tier === "sonnet" || tier === "openai") aiFallback++;
+        if (!run.output.success) {
+          failed++;
+          await updateQueueRow(row.rowNumber, "error", run.output.error ?? "unknown");
+        } else {
+          await updateQueueRow(row.rowNumber, "done");
+        }
+      } else {
         failed++;
-        await updateQueueRow(row.rowNumber, "error", err ?? result?.error ?? "unknown");
-        continue;
+        const errMsg =
+          run.error && typeof run.error === "object" && "message" in run.error
+            ? String((run.error as { message: unknown }).message)
+            : String(run.error ?? "unknown");
+        await updateQueueRow(row.rowNumber, "error", errMsg);
       }
-      scraped++;
-      if (result.tier === "haiku" || result.tier === "sonnet" || result.tier === "openai") aiFallback++;
-      await updateQueueRow(row.rowNumber, "done");
     }
 
     // Circuit breaker
