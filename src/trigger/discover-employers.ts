@@ -9,8 +9,9 @@ import {
   isPaused,
   QueueAppendRow,
 } from "../lib/sheets.js";
-import { fetchEmployerPage, RateLimitError, isLoggedOut } from "../lib/fetcher.js";
+import { fetchEmployerPage, RateLimitError, isLoggedOut, sleep } from "../lib/fetcher.js";
 import { sendTelegramAlert } from "../lib/telegram.js";
+import { US_STATES } from "../lib/states.js";
 
 const BASE = "https://www.myvisajobs.com";
 
@@ -20,18 +21,38 @@ type DiscoverySourceDef = {
   humanLabel: string;
 };
 
-const SOURCES: DiscoverySourceDef[] = [
-  {
-    url: "https://www.myvisajobs.com/reports/h1b/",
-    tag: "top_h1b_sponsors",
-    humanLabel: "Top H-1B Visa Sponsors ranking",
-  },
-  {
-    url: "https://www.myvisajobs.com/reports/green-card.aspx",
-    tag: "top_gc_sponsors",
-    humanLabel: "Top Green Card Sponsors ranking",
-  },
-];
+function buildSources(): DiscoverySourceDef[] {
+  const sources: DiscoverySourceDef[] = [
+    {
+      url: `${BASE}/reports/h1b/`,
+      tag: "top_h1b_sponsors",
+      humanLabel: "Top H-1B Visa Sponsors ranking",
+    },
+    {
+      url: `${BASE}/reports/green-card.aspx`,
+      tag: "top_gc_sponsors",
+      humanLabel: "Top Green Card Sponsors ranking",
+    },
+  ];
+
+  // Phase 2: per-state rankings (H1B + GC) — adds 100 source URLs
+  for (const s of US_STATES) {
+    sources.push({
+      url: `${BASE}/reports/h1b/state/${s.slug}/`,
+      tag: `state_h1b:${s.slug}`,
+      humanLabel: `Top H-1B Sponsors in ${s.label}`,
+    });
+    sources.push({
+      url: `${BASE}/reports/green-card/state/${s.slug}/`,
+      tag: `state_gc:${s.slug}`,
+      humanLabel: `Top Green Card Sponsors in ${s.label}`,
+    });
+  }
+
+  return sources;
+}
+
+const SOURCES: DiscoverySourceDef[] = buildSources();
 
 function normalizeEmployerUrl(href: string): string | null {
   const m = href.match(/^\/employer\/([a-z0-9-]+)\/?$/i);
@@ -93,24 +114,27 @@ export const discoverEmployers = schedules.task({
       return { added: 0, paused: true };
     }
 
-    // Collect from all discovery sources, preserving rank/position
+    // Collect from all discovery sources, preserving rank/position.
+    // Be polite: small delay between source fetches (102 sources now).
     const now = new Date();
     const candidates: QueueAppendRow[] = [];
     let totalDiscovered = 0;
+    let sourcesFailed = 0;
 
-    for (const def of SOURCES) {
+    for (let idx = 0; idx < SOURCES.length; idx++) {
+      const def = SOURCES[idx];
+      if (idx > 0) await sleep(500 + Math.random() * 500);
+
       try {
-        logger.info("Fetching discovery source", { source: def.url });
         const html = await fetchEmployerPage(def.url);
 
         if (isLoggedOut(html)) {
-          logger.warn("Discovery source shows logged-out placeholder — unusual", {
+          logger.warn("Discovery source shows logged-out placeholder", {
             source: def.url,
           });
         }
 
         const links = extractEmployerLinksOrdered(html);
-        logger.info("Extracted links", { source: def.url, count: links.length });
         totalDiscovered += links.length;
 
         links.forEach((url, i) => {
@@ -120,18 +144,35 @@ export const discoverEmployers = schedules.task({
             discoveryNotes: buildDiscoveryPrefix(def, i + 1, links.length, now),
           });
         });
+
+        if (idx % 20 === 0) {
+          logger.info("Discovery progress", {
+            completed: idx + 1,
+            total: SOURCES.length,
+            candidates: candidates.length,
+          });
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        sourcesFailed++;
         logger.error("Discovery source failed", { source: def.url, err: msg });
         if (err instanceof RateLimitError) {
           await sendTelegramAlert(
             "warning",
             "Discovery rate limited",
-            `Source: ${def.url}\nStatus: ${err.status}`,
+            `Source: ${def.url}\nStatus: ${err.status}\nPausing this run.`,
           );
+          break;
         }
       }
     }
+
+    logger.info("Discovery sweep complete", {
+      sources: SOURCES.length,
+      sourcesFailed,
+      candidates: candidates.length,
+      totalDiscovered,
+    });
 
     if (candidates.length === 0) {
       await sendTelegramAlert(

@@ -54,4 +54,6 @@ export function jitterDelay(): number {
   return REQUEST_DELAY_MIN_MS + Math.random() * (REQUEST_DELAY_MAX_MS - REQUEST_DELAY_MIN_MS);
 }
 
-export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}

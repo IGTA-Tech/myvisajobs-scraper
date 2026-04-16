@@ -183,6 +183,20 @@ function parseCountries($: cheerio.CheerioAPI, pageText: string): string | null 
   return parts.length ? parts.join(", ") : null;
 }
 
+/**
+ * MyVisaJobs sometimes renders phone numbers as ASP.NET float strings like
+ * "1.73268e+010" — which is precision-lossy garbage. Strip these entirely.
+ * Real phones are strings with dashes, spaces, parens, or a leading +.
+ */
+function cleanPhone(raw: string | null): string | null {
+  if (!raw) return null;
+  const t = raw.trim();
+  if (!t) return null;
+  // Scientific notation pattern — cannot be recovered, discard.
+  if (/^\d+\.\d+e[+-]?\d+$/i.test(t)) return null;
+  return t;
+}
+
 function parseContacts($: cheerio.CheerioAPI): Contact[] {
   const contacts: Contact[] = [];
   const emailRe = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/;
@@ -231,11 +245,25 @@ function parseContacts($: cheerio.CheerioAPI): Contact[] {
       if (emailMatch) email = emailMatch[0];
       else if (detailsText.includes(PREMIUM)) email = null;
 
-      contacts.push({ name, title, email, phone, type });
+      contacts.push({ name, title, email, phone: cleanPhone(phone), type });
     });
   });
 
-  return contacts;
+  // Dedup: same email appearing twice (same person in H1B and GC sections).
+  // Keep the entry with the most complete data (phone > no phone, title > no title).
+  const byKey = new Map<string, Contact>();
+  for (const c of contacts) {
+    const key = (c.email || c.name || "").toLowerCase();
+    if (!key) continue;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, c);
+      continue;
+    }
+    const score = (x: Contact) => (x.phone ? 2 : 0) + (x.title ? 1 : 0);
+    if (score(c) > score(existing)) byKey.set(key, c);
+  }
+  return Array.from(byKey.values()).slice(0, 10);
 }
 
 function parseWorkSites(pageText: string, label: string): string | null {
