@@ -75,6 +75,30 @@ export type Enrichment = z.infer<typeof EnrichmentSchema>;
 export type EnrichedEmployer = EmployerData &
   Partial<Enrichment> & { companySizeEstimate?: string | null; numberOfEmployees?: number | null };
 
+// LCA = Labor Condition Application — one filing per H-1B job posting.
+// Section D of the LCA contains the Employer Point of Contact, often a
+// role-specific hiring manager distinct from the generic immigration reps.
+export const LCAContactSchema = z.object({
+  lcaId: z.string().min(1),
+  employerSlug: z.string().min(1),
+  employerName: z.string().nullable().default(null),
+  year: z.number(),
+  caseStatus: z.string().nullable().default(null),
+  jobTitle: z.string().nullable().default(null),
+  salaryMin: z.number().nullable().default(null),
+  salaryMax: z.number().nullable().default(null),
+  workCity: z.string().nullable().default(null),
+  workState: z.string().nullable().default(null),
+  lawFirm: z.string().nullable().default(null),
+  contactLastName: z.string().nullable().default(null),
+  contactFirstName: z.string().nullable().default(null),
+  contactTitle: z.string().nullable().default(null),
+  contactEmail: z.string().nullable().default(null),
+  contactPhone: z.string().nullable().default(null),
+  lcaUrl: z.string().url(),
+});
+export type LCAContact = z.infer<typeof LCAContactSchema>;
+
 /**
  * Critical fields that MUST be present for a parse to be considered valid.
  * If any are missing after cheerio, we fall through to AI extraction.

@@ -13,6 +13,13 @@ export const CONFIG = {
   SHEET_TAB_DASHBOARD: "Dashboard",
   SHEET_TAB_FAILED: "Failed",
   SHEET_TAB_CONTROL: "Control",
+  SHEET_TAB_LCA: "LCA_Contacts",
+  // LCA scraper scope (option A, approved 2026-04-20)
+  LCA_YEARS: [2025, 2026] as const,
+  LCA_MAX_PER_EMPLOYER_YEAR: 20,
+  LCA_TOP_N_EMPLOYERS: 2000,
+  LCA_RESCRAPE_AFTER_DAYS: 90,
+  LCA_ENQUEUE_BATCH_SIZE: 20,
   HAIKU_MODEL: "claude-haiku-4-5-20251001",
   SONNET_MODEL: "claude-sonnet-4-5",
   OPENAI_MODEL: "gpt-4o-mini",

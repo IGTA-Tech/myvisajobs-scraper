@@ -2,7 +2,7 @@ import { sheets as sheetsApi, sheets_v4 } from "@googleapis/sheets";
 import { JWT } from "google-auth-library";
 import { CONFIG } from "./config.js";
 import { LEAD_COLUMNS, colIndex } from "./columns.js";
-import { EnrichedEmployer } from "./schema.js";
+import { EnrichedEmployer, LCAContact } from "./schema.js";
 
 let sheetsClient: sheets_v4.Sheets | null = null;
 function getSheets(): sheets_v4.Sheets {
@@ -263,6 +263,148 @@ export async function appendEmployer(
   const updatedRange = res.data.updates?.updatedRange ?? "";
   const m = updatedRange.match(/!A(\d+)/);
   return m ? Number(m[1]) : -1;
+}
+
+/**
+ * Pull top N employers from IA_Employer_Leads that haven't had their LCAs
+ * scraped in the last N days (or ever). Sorted by Visa_Rank ascending
+ * (rank 1 first). Returns employer metadata needed by the LCA scraper.
+ */
+export type EmployerToScrape = {
+  slug: string;
+  name: string;
+  visaRank: number | null;
+  rowNumber: number;
+};
+
+export async function getEmployersToScrapeLcas(
+  topN: number,
+  rescrapeAfterDays: number,
+): Promise<EmployerToScrape[]> {
+  const sheets = getSheets();
+  const urlCol = colLetter(colIndex("MyVisaJobs_URL") + 1);
+  const nameCol = colLetter(colIndex("Company_Name") + 1);
+  const rankCol = colLetter(colIndex("Visa_Rank") + 1);
+  const lcaCol = "FF"; // LCAs_Last_Scraped — col 162
+  const firstCol = urlCol < nameCol ? urlCol : nameCol;
+  const lastCol = "FF";
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_LEADS}!A2:${lastCol}`,
+  });
+  const rows = res.data.values ?? [];
+  const urlIdx = colIndex("MyVisaJobs_URL");
+  const nameIdx = colIndex("Company_Name");
+  const rankIdx = colIndex("Visa_Rank");
+  const lcaIdx = 161; // 0-based index of FF (col 162)
+
+  const cutoff = Date.now() - rescrapeAfterDays * 24 * 60 * 60 * 1000;
+  const out: EmployerToScrape[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const url = row?.[urlIdx]?.toString().trim();
+    if (!url) continue;
+    const slugMatch = url.match(/\/employer\/([a-z0-9-]+)\/?$/i);
+    if (!slugMatch) continue;
+    const slug = slugMatch[1].toLowerCase();
+
+    const lastScraped = row?.[lcaIdx]?.toString().trim();
+    if (lastScraped) {
+      const t = Date.parse(lastScraped);
+      if (Number.isFinite(t) && t > cutoff) continue;
+    }
+
+    const rank = Number(row?.[rankIdx] ?? "");
+    out.push({
+      slug,
+      name: row?.[nameIdx]?.toString().trim() ?? slug,
+      visaRank: Number.isFinite(rank) && rank > 0 ? rank : null,
+      rowNumber: i + 2,
+    });
+  }
+
+  // Sort by rank ascending (nulls last)
+  out.sort((a, b) => {
+    if (a.visaRank == null && b.visaRank == null) return 0;
+    if (a.visaRank == null) return 1;
+    if (b.visaRank == null) return -1;
+    return a.visaRank - b.visaRank;
+  });
+
+  return out.slice(0, topN);
+}
+
+/** Returns set of (slug::year) pairs already present in LCA_Contacts. */
+export async function getScrapedLcaKeys(): Promise<Set<string>> {
+  const sheets = getSheets();
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId(),
+      range: `${CONFIG.SHEET_TAB_LCA}!A2:D`,
+    });
+    const rows = res.data.values ?? [];
+    const out = new Set<string>();
+    for (const r of rows) {
+      const lcaId = r?.[0]?.toString().trim();
+      if (!lcaId) continue;
+      const slug = r?.[1]?.toString().trim().toLowerCase();
+      out.add(lcaId);
+      if (slug) {
+        const year = r?.[3]?.toString().trim();
+        if (year) out.add(`${slug}::${year}`);
+      }
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
+export async function appendLcaContacts(rows: LCAContact[]): Promise<number> {
+  if (rows.length === 0) return 0;
+  const sheets = getSheets();
+  const now = new Date().toISOString();
+  const values = rows.map((r) => [
+    r.lcaId,
+    r.employerSlug,
+    r.employerName ?? "",
+    r.year,
+    r.caseStatus ?? "",
+    r.jobTitle ?? "",
+    r.salaryMin ?? "",
+    r.salaryMax ?? "",
+    r.workCity ?? "",
+    r.workState ?? "",
+    r.lawFirm ?? "",
+    r.contactLastName ?? "",
+    r.contactFirstName ?? "",
+    r.contactTitle ?? "",
+    r.contactEmail ?? "",
+    r.contactPhone ?? "",
+    r.lcaUrl,
+    now,
+  ]);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_LCA}!A:R`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
+  });
+  return rows.length;
+}
+
+/** Mark an employer row's LCAs_Last_Scraped cell with current timestamp. */
+export async function markEmployerLcasScraped(rowNumber: number): Promise<void> {
+  const sheets = getSheets();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_LEADS}!FF${rowNumber}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[new Date().toISOString()]] },
+  });
 }
 
 export async function appendFailed(
