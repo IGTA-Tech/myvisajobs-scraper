@@ -12,8 +12,10 @@ import { LCAContact, LCAContactSchema } from "../lib/schema.js";
 import { CONFIG } from "../lib/config.js";
 import {
   appendLcaContacts,
+  appendJobs,
   markEmployerLcasScraped,
   getScrapedLcaKeys,
+  getScrapedJobIds,
 } from "../lib/sheets.js";
 import { sendTelegramAlert } from "../lib/telegram.js";
 
@@ -140,8 +142,14 @@ export const scrapeLcasForEmployer = task({
       }
     }
 
-    // 3. Deduplicate by contact email within this employer — the same hiring
-    //    manager can appear on many LCAs; keep the first occurrence.
+    // 3a. Jobs tab: append ONE row per LCA (no email dedup). Dedup by LCA ID
+    //     against existing Jobs rows so reruns don't double-write.
+    const existingJobIds = await getScrapedJobIds();
+    const newJobs = allRows.filter((r) => !existingJobIds.has(r.lcaId));
+    const jobsWritten = newJobs.length ? await appendJobs(newJobs) : 0;
+
+    // 3b. LCA_Contacts tab: dedup by contact email within this employer —
+    //     the same hiring manager often appears on many LCAs.
     const byEmail = new Map<string, LCAContact>();
     const noEmail: LCAContact[] = [];
     for (const r of allRows) {
@@ -155,9 +163,11 @@ export const scrapeLcasForEmployer = task({
     }
     const toWrite = [...byEmail.values(), ...noEmail];
 
-    // 4. Bulk write + mark employer as scraped
+    // 4. Bulk write contacts + mark employer as scraped
     const written = await appendLcaContacts(toWrite);
     await markEmployerLcasScraped(employerRowNumber);
+
+    logger.info("Jobs written", { slug, jobsWritten });
 
     logger.info("LCA scrape complete", {
       slug,

@@ -73,6 +73,23 @@ export function parseLcaDetailHtml(
   const summary = extractSummaryTable($);
   out.caseStatus = summary["Status"] ?? null;
   out.employerName = summary["Employer"] ?? null;
+  out.caseNumber = summary["Case Number"] ?? null;
+  out.occupation = summary["Job Name(SOC)"] ?? summary["SOC"] ?? null;
+
+  // Filing date derived from case number: I-200-YYDOY-XXXXXX
+  // e.g. I-200-25042-684041 -> year 2025, day 42 -> 2025-02-11
+  if (out.caseNumber) {
+    const m = out.caseNumber.match(/^I-\d{3}-(\d{2})(\d{3})-/i);
+    if (m) {
+      const yy = Number(m[1]);
+      const doy = Number(m[2]);
+      const year = yy < 50 ? 2000 + yy : 1900 + yy;
+      const d = new Date(Date.UTC(year, 0, doy));
+      if (Number.isFinite(d.getTime())) {
+        out.filingDate = d.toISOString().slice(0, 10);
+      }
+    }
+  }
 
   // Work_City may arrive as "San Mateo, CA" from summary
   const summaryWorkCity = summary["Work City"] ?? summary["Location"] ?? null;

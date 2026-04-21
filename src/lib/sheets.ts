@@ -362,6 +362,63 @@ export async function getScrapedLcaKeys(): Promise<Set<string>> {
   }
 }
 
+/**
+ * Write all scraped LCAs as job listings to the Jobs tab. Unlike
+ * appendLcaContacts, does NOT dedup by email — one row per LCA filing.
+ */
+export async function appendJobs(rows: LCAContact[]): Promise<number> {
+  if (rows.length === 0) return 0;
+  const sheets = getSheets();
+  const now = new Date().toISOString();
+  const values = rows.map((r) => [
+    r.lcaId,
+    r.caseNumber ?? "",
+    r.filingDate ?? "",
+    r.year,
+    r.caseStatus ?? "",
+    r.employerName ?? "",
+    r.employerSlug,
+    r.jobTitle ?? "",
+    r.occupation ?? "",
+    r.salaryMin ?? "",
+    r.salaryMax ?? "",
+    r.workCity ?? "",
+    r.workState ?? "",
+    r.lawFirm ?? "",
+    r.contactEmail ?? "",
+    r.lcaUrl,
+    now,
+  ]);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_JOBS}!A:Q`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
+  });
+  return rows.length;
+}
+
+/** Returns set of LCA IDs already in the Jobs tab (for dedup). */
+export async function getScrapedJobIds(): Promise<Set<string>> {
+  const sheets = getSheets();
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId(),
+      range: `${CONFIG.SHEET_TAB_JOBS}!A2:A`,
+    });
+    const rows = res.data.values ?? [];
+    const out = new Set<string>();
+    for (const r of rows) {
+      const id = r?.[0]?.toString().trim();
+      if (id) out.add(id);
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
 export async function appendLcaContacts(rows: LCAContact[]): Promise<number> {
   if (rows.length === 0) return 0;
   const sheets = getSheets();
