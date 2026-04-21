@@ -21,6 +21,10 @@ export const CONFIG = {
   LCA_TOP_N_EMPLOYERS: 2000,
   LCA_RESCRAPE_AFTER_DAYS: 90,
   LCA_ENQUEUE_BATCH_SIZE: 20,
+  // Only keep LCAs filed within the last N days. Older filings have
+  // stale hiring-manager contacts (candidate hired, role filled, staff
+  // changes). Set higher to widen, lower to tighten.
+  LCA_MAX_AGE_DAYS: 120,
   HAIKU_MODEL: "claude-haiku-4-5-20251001",
   SONNET_MODEL: "claude-sonnet-4-5",
   OPENAI_MODEL: "gpt-4o-mini",

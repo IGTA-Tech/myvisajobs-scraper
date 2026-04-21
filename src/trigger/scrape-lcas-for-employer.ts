@@ -30,6 +30,8 @@ export type ScrapeLcasResult = {
   lcasFound: number;
   lcasWritten: number;
   skippedDuplicates: number;
+  skippedStale?: number;
+  jobsWritten?: number;
   errors: number;
 };
 
@@ -50,10 +52,13 @@ export const scrapeLcasForEmployer = task({
     logger.info("Scraping LCAs for employer", { slug, employerName });
 
     const scrapedKeys = await getScrapedLcaKeys();
+    const freshnessCutoffMs =
+      Date.now() - CONFIG.LCA_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 
     const allRows: LCAContact[] = [];
     let lcasFound = 0;
     let skipped = 0;
+    let skippedStale = 0;
     let errors = 0;
 
     for (const year of CONFIG.LCA_YEARS) {
@@ -137,6 +142,19 @@ export const scrapeLcasForEmployer = task({
           logger.warn("LCA parse invalid", { id: ref.id, issues: validated.error.issues });
           continue;
         }
+
+        // Freshness filter — skip LCAs older than LCA_MAX_AGE_DAYS. Only
+        // applies when we have a reliable filingDate; missing date = keep.
+        const fd = validated.data.filingDate;
+        if (fd) {
+          const fdMs = Date.parse(fd + "T00:00:00Z");
+          if (Number.isFinite(fdMs) && fdMs < freshnessCutoffMs) {
+            skippedStale++;
+            scrapedKeys.add(ref.id); // still mark seen so we don't refetch
+            continue;
+          }
+        }
+
         allRows.push(validated.data);
         scrapedKeys.add(ref.id);
       }
@@ -167,13 +185,13 @@ export const scrapeLcasForEmployer = task({
     const written = await appendLcaContacts(toWrite);
     await markEmployerLcasScraped(employerRowNumber);
 
-    logger.info("Jobs written", { slug, jobsWritten });
-
     logger.info("LCA scrape complete", {
       slug,
       lcasFound,
-      written,
-      skipped,
+      jobsWritten,
+      contactsWritten: written,
+      skippedStale,
+      skippedDuplicates: skipped,
       errors,
     });
 
@@ -182,6 +200,8 @@ export const scrapeLcasForEmployer = task({
       lcasFound,
       lcasWritten: written,
       skippedDuplicates: skipped,
+      skippedStale,
+      jobsWritten,
       errors,
     };
   },
