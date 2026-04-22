@@ -190,6 +190,141 @@ PRIORITY:
 /**
  * Enrichment with Haiku -> Sonnet fallback. If both fail, returns empty enrichment.
  */
+// -----------------------------------------------------------------------------
+// Job-description structured extraction (Outreach pipeline)
+// -----------------------------------------------------------------------------
+
+export type JobDescriptionExtraction = {
+  location: string | null;
+  remoteFlag: string | null;
+  workType: string | null;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  salaryPeriod: string | null;
+  experienceLevel: string | null;
+  descriptionSummary: string | null;
+  responsibilities: string | null;
+  qualifications: string | null;
+  requiredSkills: string | null;
+  preferredSkills: string | null;
+  education: string | null;
+  yearsExperience: string | null;
+  benefits: string | null;
+  visaSponsorship: string | null;
+  postedDate: string | null;
+  applicationUrl: string | null;
+  aiSummary: string | null;
+};
+
+const JOB_SYSTEM = `You extract structured job-posting data from scraped page markdown. Preserve actual language from the source — do not invent. Return ONLY valid JSON, no commentary.`;
+
+/**
+ * Extract structured job fields from scraped markdown. The Description_Full
+ * column on the sheet stores the raw markdown; this function pulls out
+ * targeted structured fields.
+ *
+ * sourceUrl is passed so Claude can derive a sensible applicationUrl default.
+ */
+export async function extractJobDescriptionStructured(
+  markdown: string,
+  ctx: { employerName: string; jobTitle: string; sourceUrl: string },
+): Promise<JobDescriptionExtraction> {
+  const trimmed = markdown.slice(0, 40000);
+  const prompt = `Extract job data from this scraped page.
+
+Employer: ${ctx.employerName}
+Job title (from myvisajobs): ${ctx.jobTitle}
+Source URL: ${ctx.sourceUrl}
+
+Return ONLY this JSON. Use null when unknown — never fabricate.
+
+{
+  "location": string|null,                    // city/state from posting; "Remote" if fully remote
+  "remoteFlag": "Yes"|"No"|"Hybrid"|"Unknown",
+  "workType": "Full-time"|"Part-time"|"Contract"|"Internship"|"Temporary"|null,
+  "salaryMin": number|null,                   // annual $ (or whatever salaryPeriod is) minimum
+  "salaryMax": number|null,
+  "salaryPeriod": "Annual"|"Hourly"|"Monthly"|null,
+  "experienceLevel": "Entry"|"Mid"|"Senior"|"Lead"|"Executive"|null,
+  "descriptionSummary": string|null,          // 3-5 sentence summary of the role
+  "responsibilities": string|null,            // bullet list joined with "\\n- "
+  "qualifications": string|null,              // required qualifications, same format
+  "requiredSkills": string|null,              // comma-separated
+  "preferredSkills": string|null,             // comma-separated
+  "education": string|null,                   // e.g. "Bachelor's in Computer Science or related field"
+  "yearsExperience": string|null,             // e.g. "5+ years" or "3-5 years"
+  "benefits": string|null,                    // bullets joined with "\\n- "
+  "visaSponsorship": "Yes"|"No"|"Mentioned"|"Unknown",  // any H-1B/visa sponsor language?
+  "postedDate": string|null,                  // ISO date if visible, else null
+  "applicationUrl": string|null,              // direct "apply" link if different from sourceUrl
+  "aiSummary": string|null                    // 2-sentence pitch for a recruiter's outreach email
+}
+
+PAGE MARKDOWN:
+${trimmed}`;
+
+  const raw = await callClaude(CONFIG.HAIKU_MODEL, JOB_SYSTEM, prompt, 2500);
+  const parsed = JSON.parse(extractJson(raw));
+
+  // Normalize: ensure numeric salaries, string-or-null for others.
+  const num = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+    if (typeof v === "string") {
+      const n = Number(v.replace(/[^\d.]/g, ""));
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return null;
+  };
+  const str = (v: unknown): string | null =>
+    typeof v === "string" && v.trim() ? v.trim() : null;
+
+  return {
+    location: str(parsed.location),
+    remoteFlag: str(parsed.remoteFlag),
+    workType: str(parsed.workType),
+    salaryMin: num(parsed.salaryMin),
+    salaryMax: num(parsed.salaryMax),
+    salaryPeriod: str(parsed.salaryPeriod),
+    experienceLevel: str(parsed.experienceLevel),
+    descriptionSummary: str(parsed.descriptionSummary),
+    responsibilities: str(parsed.responsibilities),
+    qualifications: str(parsed.qualifications),
+    requiredSkills: str(parsed.requiredSkills),
+    preferredSkills: str(parsed.preferredSkills),
+    education: str(parsed.education),
+    yearsExperience: str(parsed.yearsExperience),
+    benefits: str(parsed.benefits),
+    visaSponsorship: str(parsed.visaSponsorship),
+    postedDate: str(parsed.postedDate),
+    applicationUrl: str(parsed.applicationUrl),
+    aiSummary: str(parsed.aiSummary),
+  };
+}
+
+/**
+ * Score 0-1 based on field completeness — used for Quality_Score column
+ * and to decide whether to retry with a different source URL.
+ */
+export function jobExtractionQuality(
+  ext: JobDescriptionExtraction,
+  descriptionFullLength: number,
+): number {
+  let score = 0;
+  let max = 0;
+  const present = (v: unknown): number => (v ? 1 : 0);
+
+  max += 3; score += descriptionFullLength >= 2000 ? 3 : descriptionFullLength >= 500 ? 2 : descriptionFullLength >= 200 ? 1 : 0;
+  max += 1; score += present(ext.descriptionSummary);
+  max += 2; score += present(ext.responsibilities) * 2;
+  max += 2; score += present(ext.qualifications) * 2;
+  max += 1; score += present(ext.requiredSkills);
+  max += 1; score += present(ext.location);
+  max += 1; score += present(ext.education);
+  max += 1; score += ext.salaryMin || ext.salaryMax ? 1 : 0;
+
+  return Number((score / max).toFixed(2));
+}
+
 export async function enrichWithAI(data: EmployerData): Promise<Enrichment> {
   const prompt = enrichmentPrompt(data);
 

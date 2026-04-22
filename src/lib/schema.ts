@@ -102,6 +102,49 @@ export const LCAContactSchema = z.object({
 });
 export type LCAContact = z.infer<typeof LCAContactSchema>;
 
+// Job_Descriptions row — fully enriched job from external sources (careers page,
+// ATS, LinkedIn). One row per (LCA_ID). Claude Haiku extracts the structured
+// fields from scraped markdown; Description_Full preserves the raw source.
+export const JobDescriptionSchema = z.object({
+  rowId: z.string().min(1),
+  outreachRow: z.number().int().positive(),
+  outreachRank: z.number().nullable().default(null),
+  employerName: z.string().min(1),
+  employerSlug: z.string().nullable().default(null),
+  employerEmail: z.string().nullable().default(null),
+  jobTitle: z.string().min(1),
+  location: z.string().nullable().default(null),
+  remoteFlag: z.string().nullable().default(null),
+  workType: z.string().nullable().default(null),
+  salaryMin: z.number().nullable().default(null),
+  salaryMax: z.number().nullable().default(null),
+  salaryPeriod: z.string().nullable().default(null),
+  experienceLevel: z.string().nullable().default(null),
+  descriptionFull: z.string().default(""),
+  descriptionSummary: z.string().nullable().default(null),
+  responsibilities: z.string().nullable().default(null),
+  qualifications: z.string().nullable().default(null),
+  requiredSkills: z.string().nullable().default(null),
+  preferredSkills: z.string().nullable().default(null),
+  education: z.string().nullable().default(null),
+  yearsExperience: z.string().nullable().default(null),
+  benefits: z.string().nullable().default(null),
+  visaSponsorship: z.string().nullable().default(null),
+  sourceUrl: z.string().url(),
+  sourceDomain: z.string(),
+  sourceType: z.string(),
+  postedDate: z.string().nullable().default(null),
+  applicationUrl: z.string().nullable().default(null),
+  qualityScore: z.number().min(0).max(1).default(0),
+  scraperTier: z.string(),
+  aiSummary: z.string().nullable().default(null),
+  scrapedAt: z.string(),
+  notes: z.string().nullable().default(null),
+  // internal — key for dedup. Not written to sheet directly.
+  lcaId: z.string(),
+});
+export type JobDescription = z.infer<typeof JobDescriptionSchema>;
+
 /**
  * Critical fields that MUST be present for a parse to be considered valid.
  * If any are missing after cheerio, we fall through to AI extraction.

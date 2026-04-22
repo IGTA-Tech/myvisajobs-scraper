@@ -2,7 +2,7 @@ import { sheets as sheetsApi, sheets_v4 } from "@googleapis/sheets";
 import { JWT } from "google-auth-library";
 import { CONFIG } from "./config.js";
 import { LEAD_COLUMNS, colIndex } from "./columns.js";
-import { EnrichedEmployer, LCAContact } from "./schema.js";
+import { EnrichedEmployer, LCAContact, JobDescription } from "./schema.js";
 
 let sheetsClient: sheets_v4.Sheets | null = null;
 function getSheets(): sheets_v4.Sheets {
@@ -461,6 +461,143 @@ export async function markEmployerLcasScraped(rowNumber: number): Promise<void> 
     range: `${CONFIG.SHEET_TAB_LEADS}!FF${rowNumber}`,
     valueInputOption: "RAW",
     requestBody: { values: [[new Date().toISOString()]] },
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Outreach_Companies tab + Job_Descriptions tab
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type OutreachCompany = {
+  rowNumber: number;
+  rank: number | null;
+  companyName: string;
+  employeeCount: number | null;
+  email: string | null;
+};
+
+/**
+ * Read all companies from Outreach tab, sorted by Rank DESC (bottom-up).
+ * Expected columns: A=Rank, B=Company_Name, C=Employee_Count,
+ *   D=Did this get tracked (ignored), E=How many jobs (ignored),
+ *   F=Researcher (ignored), G+=optional, including Email if present.
+ *
+ * The email column is auto-detected by header: we look for "email" in row 1.
+ */
+export async function readOutreachCompanies(): Promise<OutreachCompany[]> {
+  const sheets = getSheets();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_OUTREACH}!A1:Z`,
+  });
+  const rows = res.data.values ?? [];
+  if (rows.length < 2) return [];
+
+  const header = rows[0].map((h) => h?.toString().trim().toLowerCase() ?? "");
+  const emailIdx = header.findIndex((h) => /email/.test(h));
+
+  const out: OutreachCompany[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i] ?? [];
+    const companyName = r[1]?.toString().trim();
+    if (!companyName) continue;
+    const rank = Number(r[0]);
+    const emp = Number(r[2]);
+    out.push({
+      rowNumber: i + 1,
+      rank: Number.isFinite(rank) ? rank : null,
+      companyName,
+      employeeCount: Number.isFinite(emp) ? emp : null,
+      email: emailIdx >= 0 ? (r[emailIdx]?.toString().trim() || null) : null,
+    });
+  }
+
+  // Bottom-up: highest rank first (biggest-numbered rank first).
+  out.sort((a, b) => {
+    if (a.rank == null && b.rank == null) return 0;
+    if (a.rank == null) return 1;
+    if (b.rank == null) return -1;
+    return b.rank - a.rank;
+  });
+
+  return out;
+}
+
+/**
+ * Set of LCA_IDs already present in Job_Descriptions. Used for dedup —
+ * we never scrape the same job twice.
+ * Column mapping: AH column index 34 in the Job_Descriptions tab holds
+ * the LCA_ID (stored as a hidden companion via Row_ID prefix "JD-LCA-{id}").
+ * Simpler: the Source_URL column Y holds the LCA_URL for myvisajobs-originated
+ * rows, but ext URLs too. Use a dedicated LCA_ID in the Row_ID.
+ *
+ * We store Row_ID = `jd-{lcaId}` so we can parse it back.
+ */
+export async function getExistingJobDescriptionLcaIds(): Promise<Set<string>> {
+  const sheets = getSheets();
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId(),
+      range: `${CONFIG.SHEET_TAB_JOB_DESCRIPTIONS}!A2:A`,
+    });
+    const rows = res.data.values ?? [];
+    const out = new Set<string>();
+    for (const r of rows) {
+      const id = r?.[0]?.toString().trim();
+      if (!id) continue;
+      const m = id.match(/^jd-(.+)$/);
+      if (m) out.add(m[1]);
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
+export async function appendJobDescription(row: JobDescription): Promise<void> {
+  const sheets = getSheets();
+  const values: (string | number)[] = [
+    row.rowId,                       // A
+    row.outreachRow,                 // B
+    row.outreachRank ?? "",          // C
+    row.employerName,                // D
+    row.employerSlug ?? "",          // E
+    row.employerEmail ?? "",         // F
+    row.jobTitle,                    // G
+    row.location ?? "",              // H
+    row.remoteFlag ?? "",            // I
+    row.workType ?? "",              // J
+    row.salaryMin ?? "",             // K
+    row.salaryMax ?? "",             // L
+    row.salaryPeriod ?? "",          // M
+    row.experienceLevel ?? "",       // N
+    row.descriptionFull,             // O
+    row.descriptionSummary ?? "",    // P
+    row.responsibilities ?? "",      // Q
+    row.qualifications ?? "",        // R
+    row.requiredSkills ?? "",        // S
+    row.preferredSkills ?? "",       // T
+    row.education ?? "",             // U
+    row.yearsExperience ?? "",       // V
+    row.benefits ?? "",              // W
+    row.visaSponsorship ?? "",       // X
+    row.sourceUrl,                   // Y
+    row.sourceDomain,                // Z
+    row.sourceType,                  // AA
+    row.postedDate ?? "",            // AB
+    row.applicationUrl ?? "",        // AC
+    row.qualityScore,                // AD
+    row.scraperTier,                 // AE
+    row.aiSummary ?? "",             // AF
+    row.scrapedAt,                   // AG
+    row.notes ?? "",                 // AH
+  ];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_JOB_DESCRIPTIONS}!A:AH`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: [values] },
   });
 }
 

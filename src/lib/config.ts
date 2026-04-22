@@ -15,6 +15,8 @@ export const CONFIG = {
   SHEET_TAB_CONTROL: "Control",
   SHEET_TAB_LCA: "LCA_Contacts",
   SHEET_TAB_JOBS: "Jobs",
+  SHEET_TAB_OUTREACH: "Outreach_Companies",
+  SHEET_TAB_JOB_DESCRIPTIONS: "Job_Descriptions",
   // LCA scraper scope (option A, approved 2026-04-20)
   LCA_YEARS: [2025, 2026] as const,
   LCA_MAX_PER_EMPLOYER_YEAR: 20,
@@ -25,6 +27,15 @@ export const CONFIG = {
   // stale hiring-manager contacts (candidate hired, role filled, staff
   // changes). Set higher to widen, lower to tighten.
   LCA_MAX_AGE_DAYS: 120,
+  // --- Outreach job-description scraper (Firecrawl primary + Serper) ---
+  OUTREACH_BATCH_SIZE: 50, // employers per daily cron tick
+  OUTREACH_TOP_JOBS_PER_EMPLOYER: 3,
+  OUTREACH_MAX_FIRECRAWL_RETRIES: 1, // if quality gate fails, try one more URL
+  OUTREACH_MIN_DESCRIPTION_CHARS: 300, // quality gate for Description_Full
+  OUTREACH_FIRECRAWL_MONTHLY_BUDGET: 3000, // Hobby plan refresh
+  OUTREACH_FIRECRAWL_BREAKER_FRACTION: 0.8, // halt + alert at 80% used
+  SERPER_ENDPOINT: "https://google.serper.dev/search",
+  FIRECRAWL_SCRAPE_ENDPOINT: "https://api.firecrawl.dev/v1/scrape",
   HAIKU_MODEL: "claude-haiku-4-5-20251001",
   SONNET_MODEL: "claude-sonnet-4-5",
   OPENAI_MODEL: "gpt-4o-mini",
