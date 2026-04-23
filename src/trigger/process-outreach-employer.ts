@@ -6,7 +6,10 @@ import {
   parseCompanyListing,
   MyVisaJobsListingItem,
 } from "../lib/job-listings-parser.js";
-import { getExistingJobDescriptionLcaIds } from "../lib/sheets.js";
+import {
+  getExistingJobDescriptionLcaIds,
+  getLcaEmailByEmployerMap,
+} from "../lib/sheets.js";
 import { enrichJobDescription } from "./enrich-job-description.js";
 
 export type ProcessOutreachPayload = {
@@ -27,7 +30,7 @@ export type ProcessOutreachResult = {
 
 export const processOutreachEmployer = task({
   id: "myvisajobs.process-outreach-employer",
-  queue: { concurrencyLimit: 3 },
+  queue: { concurrencyLimit: 5 },
   maxDuration: 900,
   run: async (payload: ProcessOutreachPayload): Promise<ProcessOutreachResult> => {
     const { rowNumber, rank, companyName, email } = payload;
@@ -106,13 +109,28 @@ export const processOutreachEmployer = task({
     const firstItem = toEnrich[0];
     const employerSlug = firstItem.employerSlug ?? null;
 
+    // Look up email from LCA_Contacts by employer slug (our existing scraped
+    // contact data). Prefer manual email from Outreach_Companies if present.
+    let lcaEmailForEmployer: string | null = null;
+    if (employerSlug) {
+      try {
+        const emailMap = await getLcaEmailByEmployerMap();
+        lcaEmailForEmployer = emailMap.get(employerSlug.toLowerCase()) ?? null;
+      } catch (err) {
+        logger.warn("LCA email lookup failed (non-fatal)", {
+          companyName,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     const items = toEnrich.map((item) => ({
       payload: {
         lcaId: item.lcaId,
         lcaUrl: item.lcaUrl,
         employerName: item.employerName ?? companyName,
         employerSlug,
-        employerEmail: email,
+        employerEmail: email ?? lcaEmailForEmployer,
         jobTitle: item.jobTitle ?? "Unknown",
         outreachRow: rowNumber,
         outreachRank: rank,

@@ -34,7 +34,7 @@ export type EnrichJobResult = {
 
 export const enrichJobDescription = task({
   id: "myvisajobs.enrich-job-description",
-  queue: { concurrencyLimit: 3 },
+  queue: { concurrencyLimit: 5 },
   maxDuration: 300,
   retry: {
     maxAttempts: 2,

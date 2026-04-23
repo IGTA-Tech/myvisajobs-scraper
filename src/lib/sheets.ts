@@ -336,6 +336,34 @@ export async function getEmployersToScrapeLcas(
   return out.slice(0, topN);
 }
 
+/**
+ * Build a Map<employerSlug-lowercased, bestEmail> from LCA_Contacts.
+ * Used to populate Employer_Email in Job_Descriptions during outreach.
+ * We pick the first non-empty email we see per employer — if there are
+ * multiple contacts, they're all valid hiring-side emails.
+ */
+export async function getLcaEmailByEmployerMap(): Promise<Map<string, string>> {
+  const sheets = getSheets();
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId(),
+      range: `${CONFIG.SHEET_TAB_LCA}!B2:O`,
+    });
+    const rows = res.data.values ?? [];
+    const out = new Map<string, string>();
+    for (const r of rows) {
+      const slug = r?.[0]?.toString().trim().toLowerCase(); // col B
+      // columns in LCA_Contacts: A=LCA_ID, B=Employer_Slug, ..., O=Contact_Email
+      const email = r?.[13]?.toString().trim(); // col O (index 13 from B)
+      if (!slug || !email) continue;
+      if (!out.has(slug)) out.set(slug, email);
+    }
+    return out;
+  } catch {
+    return new Map();
+  }
+}
+
 /** Returns set of (slug::year) pairs already present in LCA_Contacts. */
 export async function getScrapedLcaKeys(): Promise<Set<string>> {
   const sheets = getSheets();
