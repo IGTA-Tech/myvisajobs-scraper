@@ -15,7 +15,7 @@ export const CONFIG = {
   SHEET_TAB_CONTROL: "Control",
   SHEET_TAB_LCA: "LCA_Contacts",
   SHEET_TAB_JOBS: "Jobs",
-  SHEET_TAB_OUTREACH: "Top Largest  Employers",
+  SHEET_TAB_OUTREACH: "Top Largest Employers",
   SHEET_TAB_JOB_DESCRIPTIONS: "Job_Descriptions",
   // LCA scraper scope (option A, approved 2026-04-20)
   LCA_YEARS: [2024, 2025, 2026] as const,
