@@ -87,6 +87,34 @@ const JUNK_URL_PATTERNS = [
   /\/cookie-policy\b/i,
 ];
 
+/**
+ * Search-results / listing page patterns. These URLs return a grid of
+ * matching jobs, NOT a specific job description — the scraper extracts
+ * thin navigation content and triggers quality warnings. Demote them
+ * below individual job detail pages so ranking prefers real postings.
+ *
+ * Kept separate from JUNK because we fall back to them if no detail-page
+ * results exist at all.
+ */
+const SEARCH_PAGE_PATTERNS = [
+  /\/search-jobs(\b|\/|$)/i,
+  /\/search-results\b/i,
+  /\/jobs\/search\b/i,
+  /\/careers\/positions\b/i,
+  /\/careers\/search\b/i,
+  /\?(?:q|query|keyword|keywords|search|s)=/i,
+  /\/jobs\/?(\?|$)/i, // bare /jobs with query string — usually a listing
+  /\/careers\/?(\?|$)/i,
+  /\/openings\/?(\?|$)/i,
+  /\/all-jobs\b/i,
+  /\/browse-jobs\b/i,
+  /\/job-listings\b/i,
+];
+
+export function isSearchResultsPage(url: string): boolean {
+  return SEARCH_PAGE_PATTERNS.some((p) => p.test(url));
+}
+
 export function classifySource(url: string, companyName?: string): SourceType {
   let host: string;
   try {
@@ -145,9 +173,12 @@ export function rankResults(
     .map((r, i) => ({
       r,
       type: classifySource(r.link, companyName),
+      isSearchPage: isSearchResultsPage(r.link),
       originalPosition: i,
     }))
     .sort((a, b) => {
+      // Detail pages always beat search/listing pages, regardless of source.
+      if (a.isSearchPage !== b.isSearchPage) return a.isSearchPage ? 1 : -1;
       const pa = SOURCE_PRIORITY[a.type];
       const pb = SOURCE_PRIORITY[b.type];
       if (pa !== pb) return pa - pb;
