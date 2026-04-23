@@ -516,7 +516,7 @@ export async function readOutreachCompanies(): Promise<OutreachCompany[]> {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId(),
-    range: `${CONFIG.SHEET_TAB_OUTREACH}!A1:Z`,
+    range: `'${CONFIG.SHEET_TAB_OUTREACH}'!A1:Z`,
   });
   const rows = res.data.values ?? [];
   if (rows.length < 2) return [];
