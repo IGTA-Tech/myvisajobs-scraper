@@ -582,6 +582,18 @@ export async function getExistingJobDescriptionLcaIds(): Promise<Set<string>> {
   }
 }
 
+/**
+ * Google Sheets has a hard 50,000 character-per-cell limit. Long scraped
+ * job descriptions can easily blow past this. Truncate defensively and
+ * append a marker so it's obvious in the sheet.
+ */
+const SHEETS_CELL_CHAR_CAP = 49500;
+function clipCell(v: string | null | undefined): string {
+  if (!v) return "";
+  if (v.length <= SHEETS_CELL_CHAR_CAP) return v;
+  return v.slice(0, SHEETS_CELL_CHAR_CAP - 30) + "\n\n… [truncated, full-length exceeds Sheets cell limit]";
+}
+
 export async function appendJobDescription(row: JobDescription): Promise<void> {
   const sheets = getSheets();
   const values: (string | number)[] = [
@@ -599,10 +611,10 @@ export async function appendJobDescription(row: JobDescription): Promise<void> {
     row.salaryMax ?? "",             // L
     row.salaryPeriod ?? "",          // M
     row.experienceLevel ?? "",       // N
-    row.descriptionFull,             // O
-    row.descriptionSummary ?? "",    // P
-    row.responsibilities ?? "",      // Q
-    row.qualifications ?? "",        // R
+    clipCell(row.descriptionFull),   // O — Google Sheets 50k/cell hard cap
+    clipCell(row.descriptionSummary), // P
+    clipCell(row.responsibilities),   // Q
+    clipCell(row.qualifications),     // R
     row.requiredSkills ?? "",        // S
     row.preferredSkills ?? "",       // T
     row.education ?? "",             // U
