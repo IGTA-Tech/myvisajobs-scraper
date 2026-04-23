@@ -39,8 +39,8 @@ const BASE = "https://www.myvisajobs.com";
 
 export const scrapeLcasForEmployer = task({
   id: "myvisajobs.scrape-lcas-for-employer",
-  queue: { concurrencyLimit: 5 },
-  maxDuration: 600,
+  queue: { concurrencyLimit: 10 },
+  maxDuration: 1200,
   retry: {
     maxAttempts: 2,
     minTimeoutInMs: 3000,

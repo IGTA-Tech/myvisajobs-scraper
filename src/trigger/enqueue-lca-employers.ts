@@ -20,7 +20,7 @@ import { sendTelegramAlert } from "../lib/telegram.js";
  */
 export const enqueueLcaEmployers = schedules.task({
   id: "myvisajobs.enqueue-lca-employers",
-  cron: { pattern: "30 6 * * *", timezone: CONFIG.TIMEZONE },
+  cron: { pattern: "30 */6 * * *", timezone: CONFIG.TIMEZONE },
   maxDuration: 1800,
   run: async () => {
     logger.info("enqueue-lca-employers tick");
