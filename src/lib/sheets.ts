@@ -594,6 +594,31 @@ function clipCell(v: string | null | undefined): string {
   return v.slice(0, SHEETS_CELL_CHAR_CAP - 30) + "\n\n… [truncated, full-length exceeds Sheets cell limit]";
 }
 
+/**
+ * Returns the set of Outreach_Rank values (from column C of
+ * Job_Descriptions) that have any row written. Used by the outreach
+ * scheduler to rotate through the 477-company list instead of
+ * re-processing the same bottom-100 every day.
+ */
+export async function getProcessedOutreachRanks(): Promise<Set<number>> {
+  const sheets = getSheets();
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId(),
+      range: `${CONFIG.SHEET_TAB_JOB_DESCRIPTIONS}!C2:C`,
+    });
+    const rows = res.data.values ?? [];
+    const out = new Set<number>();
+    for (const r of rows) {
+      const n = Number(r?.[0]);
+      if (Number.isFinite(n) && n > 0) out.add(n);
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
 export async function appendJobDescription(row: JobDescription): Promise<void> {
   const sheets = getSheets();
   const values: (string | number)[] = [

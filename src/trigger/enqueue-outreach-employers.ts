@@ -3,6 +3,7 @@ import { CONFIG } from "../lib/config.js";
 import {
   readOutreachCompanies,
   getExistingJobDescriptionLcaIds,
+  getProcessedOutreachRanks,
   isPaused,
   updateDashboard,
 } from "../lib/sheets.js";
@@ -43,21 +44,43 @@ export const enqueueOutreachEmployers = schedules.task({
     // cheap proxy: skip companies whose rowId+lcaId combo we have already.
     // But since per-job dedup handles this downstream, the simplest correct
     // behaviour is to just take the first N from the sorted list.
-    const existing = await getExistingJobDescriptionLcaIds();
+    const [existing, processedRanks] = await Promise.all([
+      getExistingJobDescriptionLcaIds(),
+      getProcessedOutreachRanks(),
+    ]);
+
+    // Filter out companies we already wrote rows for — prevents the scheduler
+    // from hammering the same bottom-100 ranks every day. Each run now
+    // advances through the 477-company list by OUTREACH_BATCH_SIZE.
+    const unprocessed = all.filter(
+      (c) => c.rank != null && !processedRanks.has(c.rank),
+    );
+
     logger.info("Reading outreach state", {
       totalCompanies: all.length,
       existingJobDescriptions: existing.size,
+      alreadyProcessedCompanies: processedRanks.size,
+      unprocessedRemaining: unprocessed.length,
     });
 
-    // Find companies that have no existing rows — prioritize those first.
-    // This is a cheap heuristic; not a hard gate.
-    const hasSome = (company: string) => {
-      // We don't have employer -> lcaIds index in memory; just use set size
-      // as a coarse stat. Leave actual per-job dedup to the child task.
-      return false;
-    };
+    const batch = unprocessed.slice(0, CONFIG.OUTREACH_BATCH_SIZE);
 
-    const batch = all.slice(0, CONFIG.OUTREACH_BATCH_SIZE);
+    if (batch.length === 0) {
+      logger.info("All outreach companies processed — nothing to do");
+      await updateDashboard({
+        lastRun: new Date().toISOString(),
+        lastRunStatus: "outreach: 0 (all processed)",
+      });
+      return {
+        processed: 0,
+        totalFound: 0,
+        totalSkipped: 0,
+        totalEnriched: 0,
+        totalFailed: 0,
+        companiesWithNoJobs: 0,
+        failedCompanies: 0,
+      };
+    }
     logger.info("Enqueueing outreach batch", {
       batchSize: batch.length,
       topCompany: batch[0]?.companyName,
