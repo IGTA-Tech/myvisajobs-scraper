@@ -29,6 +29,7 @@ export const CONFIG = {
   LCA_MAX_AGE_DAYS: 540,
   // --- Outreach job-description scraper (Firecrawl primary + Serper) ---
   OUTREACH_BATCH_SIZE: 100, // employers per daily cron tick
+  OUTREACH_IA_OVERFLOW_TOP_N: 5000, // Phase 2: top N IA_Employer_Leads to consider
   OUTREACH_TOP_JOBS_PER_EMPLOYER: 3,
   OUTREACH_MAX_FIRECRAWL_RETRIES: 1, // if quality gate fails, try one more URL
   OUTREACH_MIN_DESCRIPTION_CHARS: 300, // quality gate for Description_Full

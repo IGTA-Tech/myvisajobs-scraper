@@ -595,6 +595,110 @@ function clipCell(v: string | null | undefined): string {
 }
 
 /**
+ * Returns the set of Employer_Slug values (col E of Job_Descriptions)
+ * already processed. Used as the dedup key for the IA_Employer_Leads
+ * overflow source — Phase 2 of the outreach sweep picks top visa-
+ * ranked employers that aren't already in this set.
+ */
+export async function getProcessedOutreachSlugs(): Promise<Set<string>> {
+  const sheets = getSheets();
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId(),
+      range: `${CONFIG.SHEET_TAB_JOB_DESCRIPTIONS}!E2:E`,
+    });
+    const rows = res.data.values ?? [];
+    const out = new Set<string>();
+    for (const r of rows) {
+      const v = r?.[0]?.toString().trim().toLowerCase();
+      if (v) out.add(v);
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Phase-2 overflow source: top N employers from IA_Employer_Leads
+ * sorted by Visa_Rank ascending (smallest rank = biggest sponsor first).
+ * Kicks in after Top_Largest_Employers is fully drained.
+ *
+ * Returns rows with rank=null on purpose — our scheduler dedups the
+ * 477 list by numeric rank, and these overflow items are tracked
+ * separately by slug.
+ */
+export type OverflowEmployer = {
+  rowNumber: number;
+  companyName: string;
+  slug: string;
+  visaRank: number;
+};
+
+export async function getIaEmployersForOverflow(
+  topN: number,
+): Promise<OverflowEmployer[]> {
+  const sheets = getSheets();
+  const nameColLetter = colLetter(colIndex("Company_Name") + 1);
+  const urlColLetter = colLetter(colIndex("MyVisaJobs_URL") + 1);
+  const rankColLetter = colLetter(colIndex("Visa_Rank") + 1);
+
+  // Read the whole rows — visaRank has no contiguous column with name/url
+  // so easier to grab the whole row span once.
+  const first = [nameColLetter, urlColLetter, rankColLetter].sort()[0];
+  const last = [nameColLetter, urlColLetter, rankColLetter].sort().slice(-1)[0];
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_LEADS}!${first}2:${last}`,
+  });
+  const rows = res.data.values ?? [];
+  const nameIdx = colIndex("Company_Name") - colIndex(first.length === 1 ? "A" : "A");
+  const urlIdx = colIndex("MyVisaJobs_URL") - colIndex(first.length === 1 ? "A" : "A");
+  const rankIdx = colIndex("Visa_Rank") - colIndex(first.length === 1 ? "A" : "A");
+
+  // Simpler: just read each column separately, zip.
+  const [namesRes, urlsRes, ranksRes] = await Promise.all([
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId(),
+      range: `${CONFIG.SHEET_TAB_LEADS}!${nameColLetter}2:${nameColLetter}`,
+    }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId(),
+      range: `${CONFIG.SHEET_TAB_LEADS}!${urlColLetter}2:${urlColLetter}`,
+    }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId(),
+      range: `${CONFIG.SHEET_TAB_LEADS}!${rankColLetter}2:${rankColLetter}`,
+    }),
+  ]);
+
+  const names = namesRes.data.values ?? [];
+  const urls = urlsRes.data.values ?? [];
+  const ranks = ranksRes.data.values ?? [];
+  const len = Math.max(names.length, urls.length, ranks.length);
+
+  const out: OverflowEmployer[] = [];
+  for (let i = 0; i < len; i++) {
+    const name = names[i]?.[0]?.toString().trim();
+    const url = urls[i]?.[0]?.toString().trim();
+    const rankRaw = ranks[i]?.[0];
+    const rank = Number(rankRaw);
+    if (!name || !url || !Number.isFinite(rank) || rank <= 0) continue;
+    const slugMatch = url.match(/\/employer\/([a-z0-9-]+)\/?$/i);
+    if (!slugMatch) continue;
+    out.push({
+      rowNumber: i + 2,
+      companyName: name,
+      slug: slugMatch[1].toLowerCase(),
+      visaRank: rank,
+    });
+  }
+
+  out.sort((a, b) => a.visaRank - b.visaRank);
+  return out.slice(0, topN);
+}
+
+/**
  * Returns the set of Outreach_Rank values (from column C of
  * Job_Descriptions) that have any row written. Used by the outreach
  * scheduler to rotate through the 477-company list instead of

@@ -4,6 +4,8 @@ import {
   readOutreachCompanies,
   getExistingJobDescriptionLcaIds,
   getProcessedOutreachRanks,
+  getProcessedOutreachSlugs,
+  getIaEmployersForOverflow,
   isPaused,
   updateDashboard,
 } from "../lib/sheets.js";
@@ -44,43 +46,77 @@ export const enqueueOutreachEmployers = schedules.task({
     // cheap proxy: skip companies whose rowId+lcaId combo we have already.
     // But since per-job dedup handles this downstream, the simplest correct
     // behaviour is to just take the first N from the sorted list.
-    const [existing, processedRanks] = await Promise.all([
+    const [existing, processedRanks, processedSlugs] = await Promise.all([
       getExistingJobDescriptionLcaIds(),
       getProcessedOutreachRanks(),
+      getProcessedOutreachSlugs(),
     ]);
 
-    // Filter out companies we already wrote rows for — prevents the scheduler
-    // from hammering the same bottom-100 ranks every day. Each run now
-    // advances through the 477-company list by OUTREACH_BATCH_SIZE.
-    const unprocessed = all.filter(
+    // Phase 1: drain Top_Largest_Employers — dedup by Outreach_Rank
+    const unprocessed477 = all.filter(
       (c) => c.rank != null && !processedRanks.has(c.rank),
     );
 
     logger.info("Reading outreach state", {
-      totalCompanies: all.length,
+      totalCompaniesIn477: all.length,
       existingJobDescriptions: existing.size,
-      alreadyProcessedCompanies: processedRanks.size,
-      unprocessedRemaining: unprocessed.length,
+      alreadyProcessedBy477Rank: processedRanks.size,
+      alreadyProcessedBySlug: processedSlugs.size,
+      unprocessed477Remaining: unprocessed477.length,
     });
 
-    const batch = unprocessed.slice(0, CONFIG.OUTREACH_BATCH_SIZE);
+    let batch: Array<{
+      rowNumber: number;
+      rank: number | null;
+      companyName: string;
+      email: string | null;
+    }>;
+    let phase: "phase1-477" | "phase2-ia-overflow";
 
-    if (batch.length === 0) {
-      logger.info("All outreach companies processed — nothing to do");
-      await updateDashboard({
-        lastRun: new Date().toISOString(),
-        lastRunStatus: "outreach: 0 (all processed)",
+    if (unprocessed477.length > 0) {
+      batch = unprocessed477.slice(0, CONFIG.OUTREACH_BATCH_SIZE);
+      phase = "phase1-477";
+    } else {
+      // Phase 2: overflow to IA_Employer_Leads — top 5000 by visa rank asc,
+      // dedup by Employer_Slug. Gives us ~50 more days of processing.
+      const ia = await getIaEmployersForOverflow(CONFIG.OUTREACH_IA_OVERFLOW_TOP_N);
+      const unprocessedIa = ia.filter((e) => !processedSlugs.has(e.slug));
+
+      logger.info("Phase 2 overflow — IA_Employer_Leads", {
+        iaTotalConsidered: ia.length,
+        iaUnprocessedRemaining: unprocessedIa.length,
       });
-      return {
-        processed: 0,
-        totalFound: 0,
-        totalSkipped: 0,
-        totalEnriched: 0,
-        totalFailed: 0,
-        companiesWithNoJobs: 0,
-        failedCompanies: 0,
-      };
+
+      if (unprocessedIa.length === 0) {
+        logger.info("Both 477 and IA overflow exhausted — nothing to do");
+        await updateDashboard({
+          lastRun: new Date().toISOString(),
+          lastRunStatus: "outreach: 0 (all phase-1 + phase-2 done)",
+        });
+        return {
+          processed: 0,
+          totalFound: 0,
+          totalSkipped: 0,
+          totalEnriched: 0,
+          totalFailed: 0,
+          companiesWithNoJobs: 0,
+          failedCompanies: 0,
+        };
+      }
+
+      batch = unprocessedIa.slice(0, CONFIG.OUTREACH_BATCH_SIZE).map((e) => ({
+        rowNumber: e.rowNumber,
+        rank: null, // no 477 rank — dedup will happen by slug downstream
+        companyName: e.companyName,
+        email: null,
+      }));
+      phase = "phase2-ia-overflow";
     }
+
+    logger.info("Enqueueing outreach batch", {
+      phase,
+      batchSize: batch.length,
+    });
     logger.info("Enqueueing outreach batch", {
       batchSize: batch.length,
       topCompany: batch[0]?.companyName,
