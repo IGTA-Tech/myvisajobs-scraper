@@ -1,5 +1,10 @@
 import * as cheerio from "cheerio";
-import { fetchTalentPage, postTalentForm, ensureTalentAuthenticated } from "./talent-fetcher.js";
+import {
+  fetchTalentPage,
+  fetchTalentPageWithCookies,
+  postTalentForm,
+  ensureTalentAuthenticated,
+} from "./talent-fetcher.js";
 
 const MATCH_INVITE_URL = "https://www.myvisajobs.com/emp/hiring/match.aspx";
 
@@ -73,14 +78,21 @@ export type MatchInviteSearch = {
 };
 
 /**
- * Run one Match and Invite search. POSTs the search form with VIEWSTATE
- * tokens, returns the response HTML.
+ * Run one Match and Invite search. Always does a fresh GET first so we can
+ * forward any Set-Cookie values (anti-CSRF or session refresh) on the POST.
+ * Returns the response HTML.
  */
-export async function searchMatchInvite(
-  query: MatchInviteSearch,
-  state?: MatchInviteFormState,
-): Promise<string> {
-  const formState = state ?? (await fetchMatchInviteFormState());
+export async function searchMatchInvite(query: MatchInviteSearch): Promise<string> {
+  const { html: getHtml, setCookies } = await fetchTalentPageWithCookies(MATCH_INVITE_URL);
+  ensureTalentAuthenticated(getHtml);
+
+  const $get = cheerio.load(getHtml);
+  const get = (id: string) => $get(`#${id}`).attr("value") ?? "";
+  const formState = {
+    viewState: get("__VIEWSTATE"),
+    viewStateGenerator: get("__VIEWSTATEGENERATOR"),
+    eventValidation: get("__EVENTVALIDATION"),
+  };
 
   const fields: Record<string, string> = {
     __EVENTTARGET: "",
@@ -98,7 +110,7 @@ export async function searchMatchInvite(
     "ctl00$MainContent$hidTodayApproved": "0",
   };
 
-  const html = await postTalentForm(MATCH_INVITE_URL, fields);
+  const html = await postTalentForm(MATCH_INVITE_URL, fields, setCookies);
   ensureTalentAuthenticated(html);
   return html;
 }

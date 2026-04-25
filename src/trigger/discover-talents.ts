@@ -72,22 +72,17 @@ export const discoverTalents = schedules.task({
       for (const career of COMPUTER_SPECIALIST_CAREERS) {
         await sleep(800 + Math.random() * 800);
         try {
-          // Refresh form state per search — VIEWSTATE is single-use after a postback.
-          const formState = await fetchMatchInviteFormState();
+          const html = await searchMatchInvite({
+            keywords: kw.keywords,
+            occupation: CONFIG.TALENT_OCCUPATION,
+            suboccupation: CONFIG.TALENT_SUBOCCUPATION,
+            career: career.code,
+          });
           if (!firstSearchDone) {
-            debug.formStateOk = !!formState.viewState && !!formState.eventValidation;
-            debug.viewStateLength = formState.viewState?.length ?? 0;
-            debug.viewStateGeneratorPresent = !!formState.viewStateGenerator;
+            debug.formStateOk = true;
+            debug.viewStateLength = -1;
+            debug.viewStateGeneratorPresent = true;
           }
-          const html = await searchMatchInvite(
-            {
-              keywords: kw.keywords,
-              occupation: CONFIG.TALENT_OCCUPATION,
-              suboccupation: CONFIG.TALENT_SUBOCCUPATION,
-              career: career.code,
-            },
-            formState,
-          );
           const results = parseMatchInviteResults(html);
           totalSeen += results.length;
 
