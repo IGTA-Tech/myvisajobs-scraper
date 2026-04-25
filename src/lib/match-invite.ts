@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import { fetchTalentPage, postTalentForm, ensureTalentAuthenticated } from "./talent-fetcher.js";
 
-const MATCH_INVITE_URL = "https://www.myvisajobs.com/emp/match.aspx";
+const MATCH_INVITE_URL = "https://www.myvisajobs.com/emp/hiring/match.aspx";
 
 /**
  * ASP.NET Web Forms hidden state pulled from the GET response and required
