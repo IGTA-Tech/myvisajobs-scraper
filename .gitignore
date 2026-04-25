@@ -9,8 +9,11 @@ progress.md
 .trigger/
 dist/
 build/
-.vscode/
 .idea/
 service-account.json
 *.pem
 scripts/read-headers.mjs
+seed-html/
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
