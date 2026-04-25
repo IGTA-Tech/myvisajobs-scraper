@@ -78,6 +78,50 @@ export type EnrichedEmployer = EmployerData &
 // LCA = Labor Condition Application — one filing per H-1B job posting.
 // Section D of the LCA contains the Employer Point of Contact, often a
 // role-specific hiring manager distinct from the generic immigration reps.
+// -----------------------------------------------------------------------------
+// Talent (candidate) schema — written to Talents tab
+// -----------------------------------------------------------------------------
+
+export const TalentSchema = z.object({
+  talentId: z.string().min(1),
+  profileUrl: z.string().url(),
+  fullName: z.string().nullable().default(null),
+  firstName: z.string().nullable().default(null),
+  lastName: z.string().nullable().default(null),
+  email: z.string().nullable().default(null),
+  phone: z.string().nullable().default(null),
+  country: z.string().nullable().default(null),
+  city: z.string().nullable().default(null),
+  lookingFor: z.string().nullable().default(null),
+  occupationCategory: z.string().nullable().default(null),
+  careerLevel: z.string().nullable().default(null),
+  degree: z.string().nullable().default(null),
+  mostRecentSchool: z.string().nullable().default(null),
+  mostRecentMajor: z.string().nullable().default(null),
+  skills: z.string().nullable().default(null),
+  languages: z.string().nullable().default(null),
+  visaStatus: z.string().nullable().default(null),
+  workAuthorization: z.string().nullable().default(null),
+  expectedSalary: z.string().nullable().default(null),
+  targetUsLocations: z.string().nullable().default(null),
+  yearsExperience: z.string().nullable().default(null),
+  currentCompany: z.string().nullable().default(null),
+  currentTitle: z.string().nullable().default(null),
+  goal: z.string().nullable().default(null),
+  certifications: z.string().nullable().default(null),
+  honors: z.string().nullable().default(null),
+  experiencesFull: z.string().nullable().default(null),
+  educationFull: z.string().nullable().default(null),
+  resumeUrl: z.string().nullable().default(null),
+  contactCandidateUrl: z.string().nullable().default(null),
+  interestsHobbies: z.string().nullable().default(null),
+  aiSummary: z.string().nullable().default(null),
+  aiScore: z.number().nullable().default(null),
+  scrapedAt: z.string(),
+  notes: z.string().nullable().default(null),
+});
+export type Talent = z.infer<typeof TalentSchema>;
+
 export const LCAContactSchema = z.object({
   lcaId: z.string().min(1),
   employerSlug: z.string().min(1),

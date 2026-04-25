@@ -325,6 +325,141 @@ export function jobExtractionQuality(
   return Number((score / max).toFixed(2));
 }
 
+// -----------------------------------------------------------------------------
+// Talent enrichment — short outreach pitch + 0-100 fit score
+// -----------------------------------------------------------------------------
+
+const TALENT_SYSTEM = `You are an immigration sponsorship consultant. Return ONLY a JSON object — no commentary.`;
+
+export type TalentEnrichment = { aiSummary: string | null; aiScore: number | null };
+
+export async function enrichTalentWithAI(data: {
+  fullName?: string | null;
+  lookingFor?: string | null;
+  occupationCategory?: string | null;
+  careerLevel?: string | null;
+  degree?: string | null;
+  mostRecentSchool?: string | null;
+  mostRecentMajor?: string | null;
+  skills?: string | null;
+  country?: string | null;
+  city?: string | null;
+  visaStatus?: string | null;
+  workAuthorization?: string | null;
+  expectedSalary?: string | null;
+  targetUsLocations?: string | null;
+  yearsExperience?: string | null;
+  currentCompany?: string | null;
+  currentTitle?: string | null;
+  goal?: string | null;
+  certifications?: string | null;
+  honors?: string | null;
+  experiencesFull?: string | null;
+  educationFull?: string | null;
+}): Promise<TalentEnrichment> {
+  const prompt = `Score this talent for US H-1B sponsorship outreach (0-100) and write a 2-3 sentence pitch a recruiter could paste into a cold email.
+
+TALENT DATA:
+${JSON.stringify(data, null, 2)}
+
+Score weights:
+- 0-30: graduate degree from a known university
+- 0-25: relevant CS/AI/ML/Data skills
+- 0-20: relevant experience (years + company quality)
+- 0-15: already in US or work-authorized
+- 0-10: visa status clarity (open to sponsorship)
+
+Return ONLY:
+{"aiSummary": string, "aiScore": number 0-100}`;
+
+  const callOnce = async (model: string, useOpenAI = false): Promise<TalentEnrichment> => {
+    if (useOpenAI) {
+      // Lazy import to avoid circular dep
+      const openai = await import("./openai.js").then((m) => m).catch(() => null);
+      if (!openai) throw new Error("OpenAI fallback unavailable");
+      // Minimal one-off call using OpenAI client setup
+      const OpenAI = (await import("openai")).default;
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) throw new Error("OPENAI_API_KEY not set");
+      const client = new OpenAI({ apiKey });
+      const res = await client.chat.completions.create({
+        model: CONFIG.OPENAI_MODEL,
+        temperature: 0.2,
+        max_tokens: 800,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: TALENT_SYSTEM },
+          { role: "user", content: prompt },
+        ],
+      });
+      const content = res.choices[0]?.message?.content ?? "{}";
+      const parsed = JSON.parse(content);
+      return normalize(parsed);
+    }
+    const raw = await callClaude(model, TALENT_SYSTEM, prompt, 800);
+    const parsed = JSON.parse(extractJson(raw));
+    return normalize(parsed);
+  };
+
+  // Tier 1: Haiku
+  try {
+    return await callOnce(CONFIG.HAIKU_MODEL);
+  } catch {
+    // Tier 2: Sonnet
+    try {
+      return await callOnce(CONFIG.SONNET_MODEL);
+    } catch {
+      // Tier 3: OpenAI
+      try {
+        return await callOnce(CONFIG.OPENAI_MODEL, true);
+      } catch {
+        // Tier 4: rule-based deterministic fallback so the pipeline never blocks
+        return ruleBasedTalentScore(data);
+      }
+    }
+  }
+}
+
+function normalize(parsed: unknown): TalentEnrichment {
+  const obj = parsed as { aiSummary?: unknown; aiScore?: unknown };
+  const summary = typeof obj.aiSummary === "string" && obj.aiSummary.trim() ? obj.aiSummary.trim() : null;
+  let score: number | null = null;
+  if (typeof obj.aiScore === "number" && Number.isFinite(obj.aiScore)) score = Math.max(0, Math.min(100, Math.round(obj.aiScore)));
+  return { aiSummary: summary, aiScore: score };
+}
+
+/**
+ * Deterministic last-resort scorer when all AI providers fail. Ensures the
+ * pipeline keeps moving and the row gets a Quality_Score-like signal.
+ */
+function ruleBasedTalentScore(d: {
+  degree?: string | null;
+  skills?: string | null;
+  yearsExperience?: string | null;
+  workAuthorization?: string | null;
+  country?: string | null;
+}): TalentEnrichment {
+  let score = 30; // base
+  if (d.degree) {
+    if (/master|m\.?s\.?|m\.?eng\.?|phd|doctorate/i.test(d.degree)) score += 25;
+    else if (/bachelor|b\.?s\.?|b\.?a\.?|b\.?e\.?/i.test(d.degree)) score += 15;
+  }
+  if (d.skills) {
+    const len = d.skills.length;
+    score += Math.min(20, Math.floor(len / 30));
+  }
+  if (d.yearsExperience) {
+    const m = d.yearsExperience.match(/(\d+)\s*role/);
+    if (m) score += Math.min(15, Number(m[1]) * 3);
+  }
+  if (d.workAuthorization && !/none/i.test(d.workAuthorization)) score += 10;
+  if (d.country && /united states|usa|us\b/i.test(d.country)) score += 10;
+  return {
+    aiSummary: "AI scoring unavailable; rule-based fallback applied. Review profile manually before outreach.",
+    aiScore: Math.max(0, Math.min(100, score)),
+  };
+}
+
 export async function enrichWithAI(data: EmployerData): Promise<Enrichment> {
   const prompt = enrichmentPrompt(data);
 

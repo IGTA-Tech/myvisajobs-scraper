@@ -2,7 +2,7 @@ import { sheets as sheetsApi, sheets_v4 } from "@googleapis/sheets";
 import { JWT } from "google-auth-library";
 import { CONFIG } from "./config.js";
 import { LEAD_COLUMNS, colIndex } from "./columns.js";
-import { EnrichedEmployer, LCAContact, JobDescription } from "./schema.js";
+import { EnrichedEmployer, LCAContact, JobDescription, Talent } from "./schema.js";
 
 let sheetsClient: sheets_v4.Sheets | null = null;
 function getSheets(): sheets_v4.Sheets {
@@ -580,6 +580,157 @@ export async function getExistingJobDescriptionLcaIds(): Promise<Set<string>> {
   } catch {
     return new Set();
   }
+}
+
+// -----------------------------------------------------------------------------
+// Talent pipeline helpers
+// -----------------------------------------------------------------------------
+
+export type TalentQueueRow = {
+  rowNumber: number;
+  talentId: string;
+  profileUrl: string;
+  status: string;
+  discoverySource: string | null;
+};
+
+/** Read pending Talent_Queue rows (col A=Talent_ID, B=Profile_URL, C=Status, D=Discovery_Source). */
+export async function readTalentQueue(limit: number): Promise<TalentQueueRow[]> {
+  const sheets = getSheets();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_TALENT_QUEUE}!A2:D`,
+  });
+  const rows = res.data.values ?? [];
+  const out: TalentQueueRow[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const [tid, url, status, source] = rows[i] ?? [];
+    const s = (status ?? "").toString().trim().toLowerCase();
+    if (tid && url && (s === "" || s === "pending")) {
+      out.push({
+        rowNumber: i + 2,
+        talentId: String(tid).trim(),
+        profileUrl: String(url).trim(),
+        status: s,
+        discoverySource: source ? String(source).trim() : null,
+      });
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}
+
+export type TalentQueueAppendItem = {
+  talentId: string;
+  profileUrl: string;
+  discoverySource: string;
+};
+
+export async function appendToTalentQueue(items: TalentQueueAppendItem[]): Promise<number> {
+  if (items.length === 0) return 0;
+  const sheets = getSheets();
+  const now = new Date().toISOString();
+  const rows = items.map((i) => [i.talentId, i.profileUrl, "pending", i.discoverySource, now, "", ""]);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_TALENT_QUEUE}!A:G`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: rows },
+  });
+  return items.length;
+}
+
+export async function updateTalentQueueRow(
+  rowNumber: number,
+  status: "processing" | "done" | "duplicate" | "error",
+  error?: string,
+): Promise<void> {
+  const sheets = getSheets();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_TALENT_QUEUE}!C${rowNumber}:G${rowNumber}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[status, "", "", error ?? "", new Date().toISOString()]] },
+  });
+}
+
+/** Set of Talent_IDs already in Talents tab AND Talent_Queue (any status). */
+export async function getKnownTalentIds(): Promise<Set<string>> {
+  const sheets = getSheets();
+  const out = new Set<string>();
+  try {
+    const [talentRes, queueRes] = await Promise.all([
+      sheets.spreadsheets.values.get({
+        spreadsheetId: sheetId(),
+        range: `${CONFIG.SHEET_TAB_TALENTS}!A2:A`,
+      }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId: sheetId(),
+        range: `${CONFIG.SHEET_TAB_TALENT_QUEUE}!A2:A`,
+      }),
+    ]);
+    for (const r of talentRes.data.values ?? []) {
+      const v = r?.[0]?.toString().trim();
+      if (v) out.add(v);
+    }
+    for (const r of queueRes.data.values ?? []) {
+      const v = r?.[0]?.toString().trim();
+      if (v) out.add(v);
+    }
+  } catch {
+    // ignore — return whatever we got
+  }
+  return out;
+}
+
+export async function appendTalent(talent: Talent): Promise<void> {
+  const sheets = getSheets();
+  const values: (string | number)[] = [
+    talent.talentId,
+    talent.profileUrl,
+    talent.fullName ?? "",
+    talent.firstName ?? "",
+    talent.lastName ?? "",
+    talent.email ?? "",
+    talent.phone ?? "",
+    talent.country ?? "",
+    talent.city ?? "",
+    talent.lookingFor ?? "",
+    talent.occupationCategory ?? "",
+    talent.careerLevel ?? "",
+    talent.degree ?? "",
+    talent.mostRecentSchool ?? "",
+    talent.mostRecentMajor ?? "",
+    clipCell(talent.skills),
+    talent.languages ?? "",
+    talent.visaStatus ?? "",
+    talent.workAuthorization ?? "",
+    talent.expectedSalary ?? "",
+    talent.targetUsLocations ?? "",
+    talent.yearsExperience ?? "",
+    talent.currentCompany ?? "",
+    talent.currentTitle ?? "",
+    clipCell(talent.goal),
+    clipCell(talent.certifications),
+    clipCell(talent.honors),
+    clipCell(talent.experiencesFull),
+    clipCell(talent.educationFull),
+    talent.resumeUrl ?? "",
+    talent.contactCandidateUrl ?? "",
+    clipCell(talent.interestsHobbies),
+    clipCell(talent.aiSummary),
+    talent.aiScore ?? "",
+    talent.scrapedAt,
+    talent.notes ?? "",
+  ];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId(),
+    range: `${CONFIG.SHEET_TAB_TALENTS}!A:AJ`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: [values] },
+  });
 }
 
 /**

@@ -30,6 +30,15 @@ export const CONFIG = {
   // --- Outreach job-description scraper (Firecrawl primary + Serper) ---
   OUTREACH_BATCH_SIZE: 100, // employers per daily cron tick
   OUTREACH_IA_OVERFLOW_TOP_N: 5000, // Phase 2: top N IA_Employer_Leads to consider
+
+  // --- Talent scraper (Match and Invite + per-candidate parser) ---
+  SHEET_TAB_TALENTS: "Talents",
+  SHEET_TAB_TALENT_QUEUE: "Talent_Queue",
+  TALENT_DAILY_TARGET: 1500, // talents to scrape per day
+  TALENT_QUEUE_BATCH_SIZE: 200, // talents per process-talent-queue tick
+  TALENT_OCCUPATION: "15-1000", // IT and Math
+  TALENT_SUBOCCUPATION: "15-1000", // Computer specialists
+  TALENT_AI_ENRICH: true, // Claude Haiku per-talent summary + score
   OUTREACH_TOP_JOBS_PER_EMPLOYER: 3,
   OUTREACH_MAX_FIRECRAWL_RETRIES: 1, // if quality gate fails, try one more URL
   OUTREACH_MIN_DESCRIPTION_CHARS: 300, // quality gate for Description_Full
