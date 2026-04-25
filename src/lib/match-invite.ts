@@ -26,6 +26,42 @@ export async function fetchMatchInviteFormState(): Promise<MatchInviteFormState>
   };
 }
 
+/**
+ * Like fetchMatchInviteFormState but also returns the raw HTML and a
+ * snapshot of every hidden input on the page. Used by discover-talents
+ * for diagnostics — answers "are we even getting the right form?".
+ */
+export async function fetchMatchInviteFormStateDebug(): Promise<{
+  state: MatchInviteFormState;
+  html: string;
+  title: string;
+  hiddenInputs: Array<{ name: string; valueLength: number }>;
+}> {
+  const html = await fetchTalentPage(MATCH_INVITE_URL);
+  ensureTalentAuthenticated(html);
+  const $ = cheerio.load(html);
+  const get = (id: string) => $(`#${id}`).attr("value") ?? "";
+  const hiddenInputs: Array<{ name: string; valueLength: number }> = [];
+  $('input[type="hidden"]').each((_, el) => {
+    const $el = $(el);
+    hiddenInputs.push({
+      name: $el.attr("name") ?? "",
+      valueLength: ($el.attr("value") ?? "").length,
+    });
+  });
+  const title = ($("title").first().text() ?? "").trim();
+  return {
+    state: {
+      viewState: get("__VIEWSTATE"),
+      viewStateGenerator: get("__VIEWSTATEGENERATOR"),
+      eventValidation: get("__EVENTVALIDATION"),
+    },
+    html,
+    title,
+    hiddenInputs,
+  };
+}
+
 export type MatchInviteSearch = {
   keywords: string;
   /** Occupation code (top-level), e.g., "15-1000" for Computer specialists / IT and Math. */

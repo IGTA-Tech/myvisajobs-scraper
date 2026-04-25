@@ -2,6 +2,7 @@ import { logger, schedules } from "@trigger.dev/sdk";
 import { CONFIG } from "../lib/config.js";
 import {
   fetchMatchInviteFormState,
+  fetchMatchInviteFormStateDebug,
   searchMatchInvite,
   parseMatchInviteResults,
   COMPUTER_SPECIALIST_CAREERS,
@@ -56,6 +57,17 @@ export const discoverTalents = schedules.task({
     };
 
     let firstSearchDone = false;
+    // One-time GET diagnostic so we can see what the empty form looks like.
+    try {
+      const dbg = await fetchMatchInviteFormStateDebug();
+      debug.getResponseTitle = dbg.title;
+      debug.getResponseHtmlLength = dbg.html.length;
+      debug.getResponseHasMatchForm = /MainContent\$ddlOccupations/.test(dbg.html);
+      debug.getResponseHiddenFields = dbg.hiddenInputs.map((h) => `${h.name}(${h.valueLength})`).join(", ");
+      debug.getResponseHtmlHead = dbg.html.slice(0, 800);
+    } catch (err) {
+      debug.getDiagnosticError = err instanceof Error ? err.message : String(err);
+    }
     for (const kw of TALENT_KEYWORD_SETS) {
       for (const career of COMPUTER_SPECIALIST_CAREERS) {
         await sleep(800 + Math.random() * 800);
