@@ -68,6 +68,22 @@ export const discoverTalents = schedules.task({
     } catch (err) {
       debug.getDiagnosticError = err instanceof Error ? err.message : String(err);
     }
+    // Cookie chain diagnostic — verify env var update + Set-Cookie capture.
+    try {
+      const { fetchTalentPageWithCookies } = await import("../lib/talent-fetcher.js");
+      const r = await fetchTalentPageWithCookies("https://www.myvisajobs.com/emp/hiring/match.aspx");
+      const envQv = (cookie.match(/QVWROLES=([^;]+)/)?.[1] ?? "").slice(0, 24);
+      const setCookieNames = r.setCookies.map((sc) => sc.split(";")[0].split("=")[0]).join(",");
+      const setQv = r.setCookies
+        .find((sc) => sc.startsWith("QVWROLES="))
+        ?.split(";")[0].slice(9, 33);
+      debug.envQVWROLESPrefix = envQv;
+      debug.getReturnedSetCookieCount = r.setCookies.length;
+      debug.getReturnedSetCookieNames = setCookieNames;
+      debug.getReturnedQVWROLESPrefix = setQv ?? "(none)";
+    } catch (err) {
+      debug.cookieChainDiagnosticError = err instanceof Error ? err.message : String(err);
+    }
     for (const kw of TALENT_KEYWORD_SETS) {
       for (const career of COMPUTER_SPECIALIST_CAREERS) {
         await sleep(800 + Math.random() * 800);
