@@ -45,8 +45,8 @@ export async function postTalentForm(
     method: "POST",
     headers: buildHeaders({
       "Content-Type": "application/x-www-form-urlencoded",
-      Origin: "https://www.myvisajobs.com",
       Referer: url,
+      "X-Requested-With": "XMLHttpRequest",
     }),
     body: body.toString(),
     redirect: "follow",

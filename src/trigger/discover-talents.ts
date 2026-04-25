@@ -99,14 +99,16 @@ export const discoverTalents = schedules.task({
             debug.firstSearchHtmlLength = html.length;
             debug.firstSearchResults = results.length;
             debug.firstSearchHtmlHeadSnippet = html.slice(0, 600);
-            debug.firstSearchHtmlMidSnippet = html.slice(
-              Math.floor(html.length / 2),
-              Math.floor(html.length / 2) + 600,
-            );
+            debug.firstSearchHtmlBodyStart = html.slice(2000, 2600);
+            debug.firstSearchHtmlBodyMid = html.slice(20000, 20600);
             debug.firstSearchHasCandidateLinks = /\/candidate\//i.test(html);
             debug.firstSearchHasSignInIndicator = /Sign\s*In|signin\.aspx/i.test(html);
             debug.firstSearchHasUpgradePrompt = /upgrade|premium\s*employer/i.test(html);
             debug.firstSearchHasResultsTable = /<table[^>]*>[\s\S]*?<a[^>]*\/candidate\//i.test(html);
+            debug.firstSearchTitle = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
+            debug.firstSearchHasErrorMsg = /error|exception|invalid|failed/i.test(html.slice(0, 5000));
+            debug.firstSearchHasMatchedText = /matched\s+\d+\s+candidate|Our system matched/i.test(html);
+            debug.firstSearchHasGenericServerError = /Page\s+Temporarily\s+Unavailable|System is taking a break/i.test(html);
             logger.info("First match-invite search debug", debug);
           }
 
