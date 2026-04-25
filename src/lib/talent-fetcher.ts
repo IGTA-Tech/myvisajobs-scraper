@@ -99,14 +99,28 @@ export async function postTalentForm(
     .map(([k, v]) => `${k}=${v}`)
     .join("; ");
 
+  // Mirror Chrome's exact form-POST headers. Removed X-Requested-With
+  // because browser navigation form submits don't send it; ASP.NET may
+  // route differently when it sees that header. Added sec-fetch-* as
+  // legitimacy signals — ASP.NET ignores them but anti-bot middleware
+  // might require their presence.
   const headers: Record<string, string> = {
     "User-Agent": CONFIG.USER_AGENT,
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    Accept:
+      "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Language": "en-US,en;q=0.9",
-    "Cache-Control": "no-cache",
+    "Cache-Control": "max-age=0",
     "Content-Type": "application/x-www-form-urlencoded",
+    Origin: "https://www.myvisajobs.com",
     Referer: url,
-    "X-Requested-With": "XMLHttpRequest",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "Sec-Ch-Ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
   };
   if (mergedCookie) headers["Cookie"] = mergedCookie;
 
