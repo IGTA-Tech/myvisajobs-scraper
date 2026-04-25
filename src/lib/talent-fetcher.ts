@@ -70,27 +70,34 @@ export async function postTalentForm(
   for (const [k, v] of Object.entries(fields)) body.set(k, v);
 
   // Merge extra cookies (from a prior GET's Set-Cookie) into the static cookie.
+  // CRITICAL: myvisajobs rolls QVWROLES (and possibly others) on every request,
+  // so when an extra cookie has the same name as one in the static env var,
+  // the EXTRA one (newer, rolled) must REPLACE the static one — not be skipped.
   const baseCookie = process.env.MYVISAJOBS_TALENT_COOKIE ?? "";
-  let mergedCookie = baseCookie;
+  const cookieMap = new Map<string, string>();
+  baseCookie.split(/;\s*/).forEach((p) => {
+    const idx = p.indexOf("=");
+    if (idx > 0) {
+      const name = p.slice(0, idx).trim();
+      const value = p.slice(idx + 1);
+      if (name) cookieMap.set(name, value);
+    }
+  });
   if (extraCookies && extraCookies.length > 0) {
-    const baseNames = new Set<string>();
-    baseCookie.split(/;\s*/).forEach((p) => {
-      const idx = p.indexOf("=");
-      if (idx > 0) baseNames.add(p.slice(0, idx).trim());
-    });
     for (const sc of extraCookies) {
       // "name=value; Path=...; HttpOnly" — keep only name=value
       const cookiePart = sc.split(";")[0].trim();
       const idx = cookiePart.indexOf("=");
       if (idx > 0) {
         const name = cookiePart.slice(0, idx).trim();
-        if (!baseNames.has(name)) {
-          mergedCookie = mergedCookie ? `${mergedCookie}; ${cookiePart}` : cookiePart;
-          baseNames.add(name);
-        }
+        const value = cookiePart.slice(idx + 1);
+        if (name) cookieMap.set(name, value); // REPLACE, not skip
       }
     }
   }
+  const mergedCookie = Array.from(cookieMap.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
 
   const headers: Record<string, string> = {
     "User-Agent": CONFIG.USER_AGENT,
