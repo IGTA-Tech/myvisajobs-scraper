@@ -49,6 +49,7 @@ export async function searchMatchInvite(
   const fields: Record<string, string> = {
     __EVENTTARGET: "",
     __EVENTARGUMENT: "",
+    __LASTFOCUS: "",
     __VIEWSTATE: formState.viewState,
     __VIEWSTATEGENERATOR: formState.viewStateGenerator,
     __EVENTVALIDATION: formState.eventValidation,
@@ -57,6 +58,8 @@ export async function searchMatchInvite(
     "ctl00$MainContent$ddlSubOccupations": query.suboccupation,
     "ctl00$MainContent$ddlCareer": query.career,
     "ctl00$MainContent$btnSaveOnly": "Match",
+    "ctl00$MainContent$Hidden1": "FALSE",
+    "ctl00$MainContent$hidTodayApproved": "0",
   };
 
   const html = await postTalentForm(MATCH_INVITE_URL, fields);
