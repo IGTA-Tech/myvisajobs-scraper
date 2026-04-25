@@ -56,7 +56,7 @@ export async function searchMatchInvite(
     "ctl00$MainContent$ddlOccupations": query.occupation,
     "ctl00$MainContent$ddlSubOccupations": query.suboccupation,
     "ctl00$MainContent$ddlCareer": query.career,
-    "ctl00$MainContent$btnSearch": "Match",
+    "ctl00$MainContent$btnSaveOnly": "Match",
   };
 
   const html = await postTalentForm(MATCH_INVITE_URL, fields);
