@@ -29,7 +29,7 @@ import {
 export const discoverTalents = schedules.task({
   id: "myvisajobs.discover-talents",
   cron: { pattern: "0 */4 * * *", timezone: CONFIG.TIMEZONE },
-  maxDuration: 1500,
+  maxDuration: 2400,
   run: async (payload) => {
     logger.info("discover-talents tick");
 

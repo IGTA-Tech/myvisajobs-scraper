@@ -41,7 +41,9 @@ export const CONFIG = {
   TALENT_AI_ENRICH: true, // Claude Haiku per-talent summary + score
   // How many (career, keyword) combinations to run per discovery cron tick.
   // Stateless rotation: each tick advances the cursor by this amount.
-  TALENT_DISCOVERY_SEARCHES_PER_RUN: 10,
+  // 55 = full Computer-specialist sub-grid; full grid (with new keyword
+  // sets at 110 cells) cycles every ~8h at 4h cron interval.
+  TALENT_DISCOVERY_SEARCHES_PER_RUN: 55,
   OUTREACH_TOP_JOBS_PER_EMPLOYER: 3,
   OUTREACH_MAX_FIRECRAWL_RETRIES: 1, // if quality gate fails, try one more URL
   OUTREACH_MIN_DESCRIPTION_CHARS: 300, // quality gate for Description_Full

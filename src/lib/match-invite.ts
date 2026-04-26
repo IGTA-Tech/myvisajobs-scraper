@@ -77,7 +77,7 @@ export const COMPUTER_SPECIALIST_CAREERS: Array<{ code: string; label: string }>
 
 /**
  * Free-text keyword sets layered on top of each career SOC. Combined with
- * 11 careers gives 55 (career × keyword) discovery cells; the cron rotates
+ * 11 careers gives 110 (career × keyword) discovery cells; the cron rotates
  * through them to keep surfacing fresh candidates.
  */
 export const TALENT_KEYWORD_SETS: Array<{ tag: string; keywords: string }> = [
@@ -86,4 +86,9 @@ export const TALENT_KEYWORD_SETS: Array<{ tag: string; keywords: string }> = [
   { tag: "software-eng", keywords: "Software Engineer, Backend, Frontend, Full Stack" },
   { tag: "ml-research", keywords: "Machine Learning Researcher, Deep Learning, NLP, Computer Vision" },
   { tag: "cloud-devops", keywords: "Cloud Engineer, DevOps, Kubernetes, AWS, Azure, GCP" },
+  { tag: "ai-llm", keywords: "LLM, Large Language Model, GPT, Transformer, Generative AI, RAG" },
+  { tag: "ai-vision", keywords: "Computer Vision, OpenCV, Image Recognition, CNN, Object Detection" },
+  { tag: "mobile-eng", keywords: "Mobile Engineer, iOS, Android, Swift, Kotlin, React Native" },
+  { tag: "security-eng", keywords: "Security Engineer, Cybersecurity, SOC Analyst, Penetration Testing" },
+  { tag: "data-science", keywords: "Data Scientist, Statistics, R, Python, SQL, Tableau, Business Intelligence" },
 ];
