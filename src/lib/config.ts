@@ -39,6 +39,9 @@ export const CONFIG = {
   TALENT_OCCUPATION: "15-1000", // IT and Math
   TALENT_SUBOCCUPATION: "15-1000", // Computer specialists
   TALENT_AI_ENRICH: true, // Claude Haiku per-talent summary + score
+  // How many (career, keyword) combinations to run per discovery cron tick.
+  // Stateless rotation: each tick advances the cursor by this amount.
+  TALENT_DISCOVERY_SEARCHES_PER_RUN: 10,
   OUTREACH_TOP_JOBS_PER_EMPLOYER: 3,
   OUTREACH_MAX_FIRECRAWL_RETRIES: 1, // if quality gate fails, try one more URL
   OUTREACH_MIN_DESCRIPTION_CHARS: 300, // quality gate for Description_Full

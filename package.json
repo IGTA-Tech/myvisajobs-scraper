@@ -16,9 +16,11 @@
     "cheerio": "^1.0.0",
     "google-auth-library": "^9.15.1",
     "openai": "^4.73.0",
+    "playwright": "^1.59.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@trigger.dev/build": "^4.4.4",
     "@types/node": "^20.14.0",
     "typescript": "^5.5.4"
   },

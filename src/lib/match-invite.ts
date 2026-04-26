@@ -1,123 +1,13 @@
 import * as cheerio from "cheerio";
-import {
-  fetchTalentPage,
-  fetchTalentPageWithCookies,
-  postTalentForm,
-  ensureTalentAuthenticated,
-} from "./talent-fetcher.js";
-
-const MATCH_INVITE_URL = "https://www.myvisajobs.com/emp/hiring/match.aspx";
 
 /**
- * ASP.NET Web Forms hidden state pulled from the GET response and required
- * on every POST.
- */
-export type MatchInviteFormState = {
-  viewState: string;
-  viewStateGenerator: string;
-  eventValidation: string;
-};
-
-export async function fetchMatchInviteFormState(): Promise<MatchInviteFormState> {
-  const html = await fetchTalentPage(MATCH_INVITE_URL);
-  ensureTalentAuthenticated(html);
-
-  const $ = cheerio.load(html);
-  const get = (id: string) => $(`#${id}`).attr("value") ?? "";
-  return {
-    viewState: get("__VIEWSTATE"),
-    viewStateGenerator: get("__VIEWSTATEGENERATOR"),
-    eventValidation: get("__EVENTVALIDATION"),
-  };
-}
-
-/**
- * Like fetchMatchInviteFormState but also returns the raw HTML and a
- * snapshot of every hidden input on the page. Used by discover-talents
- * for diagnostics — answers "are we even getting the right form?".
- */
-export async function fetchMatchInviteFormStateDebug(): Promise<{
-  state: MatchInviteFormState;
-  html: string;
-  title: string;
-  hiddenInputs: Array<{ name: string; valueLength: number }>;
-}> {
-  const html = await fetchTalentPage(MATCH_INVITE_URL);
-  ensureTalentAuthenticated(html);
-  const $ = cheerio.load(html);
-  const get = (id: string) => $(`#${id}`).attr("value") ?? "";
-  const hiddenInputs: Array<{ name: string; valueLength: number }> = [];
-  $('input[type="hidden"]').each((_, el) => {
-    const $el = $(el);
-    hiddenInputs.push({
-      name: $el.attr("name") ?? "",
-      valueLength: ($el.attr("value") ?? "").length,
-    });
-  });
-  const title = ($("title").first().text() ?? "").trim();
-  return {
-    state: {
-      viewState: get("__VIEWSTATE"),
-      viewStateGenerator: get("__VIEWSTATEGENERATOR"),
-      eventValidation: get("__EVENTVALIDATION"),
-    },
-    html,
-    title,
-    hiddenInputs,
-  };
-}
-
-export type MatchInviteSearch = {
-  keywords: string;
-  /** Occupation code (top-level), e.g., "15-1000" for Computer specialists / IT and Math. */
-  occupation: string;
-  /** Suboccupation code, e.g., "15-1000" for Computer specialists. */
-  suboccupation: string;
-  /** Career code, e.g., "15-1133" for Software Developers, Systems Software. */
-  career: string;
-};
-
-/**
- * Run one Match and Invite search. Always does a fresh GET first so we can
- * forward any Set-Cookie values (anti-CSRF or session refresh) on the POST.
- * Returns the response HTML.
- */
-export async function searchMatchInvite(query: MatchInviteSearch): Promise<string> {
-  const { html: getHtml, setCookies } = await fetchTalentPageWithCookies(MATCH_INVITE_URL);
-  ensureTalentAuthenticated(getHtml);
-
-  const $get = cheerio.load(getHtml);
-  const get = (id: string) => $get(`#${id}`).attr("value") ?? "";
-  const formState = {
-    viewState: get("__VIEWSTATE"),
-    viewStateGenerator: get("__VIEWSTATEGENERATOR"),
-    eventValidation: get("__EVENTVALIDATION"),
-  };
-
-  const fields: Record<string, string> = {
-    __EVENTTARGET: "",
-    __EVENTARGUMENT: "",
-    __LASTFOCUS: "",
-    __VIEWSTATE: formState.viewState,
-    __VIEWSTATEGENERATOR: formState.viewStateGenerator,
-    __EVENTVALIDATION: formState.eventValidation,
-    "ctl00$MainContent$txtInfo": query.keywords,
-    "ctl00$MainContent$ddlOccupations": query.occupation,
-    "ctl00$MainContent$ddlSubOccupations": query.suboccupation,
-    "ctl00$MainContent$ddlCareer": query.career,
-    "ctl00$MainContent$btnSaveOnly": "Match",
-    "ctl00$MainContent$Hidden1": "FALSE",
-    "ctl00$MainContent$hidTodayApproved": "0",
-  };
-
-  const html = await postTalentForm(MATCH_INVITE_URL, fields, setCookies);
-  ensureTalentAuthenticated(html);
-  return html;
-}
-
-/**
- * Parse the result table of a Match and Invite response.
- * Each row's first or second column has an <a href="/candidate/{slug}-{id}/">.
+ * Parse the result table of a Match and Invite response page.
+ * Each candidate row has an <a href="/candidate/{slug}-{id}/">.
+ *
+ * NOTE: discover-talents drives the search via Playwright now (see
+ * `talent-discovery-browser.ts`). The fetch/POST flow that previously
+ * lived here was retired because the ASP.NET form's VIEWSTATE +
+ * cascading-postback behavior could not be reliably replayed server-side.
  */
 export type MatchInviteResult = {
   talentId: string;
@@ -148,8 +38,6 @@ export function parseMatchInviteResults(html: string): MatchInviteResult[] {
     const cells = $row.find("td").map((_, td) => $(td).text().replace(/\s+/g, " ").trim()).get();
 
     const lastName = $a.text().trim() || null;
-    // Result table column order: [photo, name, degree, location, skills, score]
-    // Indexes can shift; pick by content heuristics.
     const degree = cells.find((c) => /degree/i.test(c)) ?? null;
     const location = cells.find((c) => /(United States|India|China|Pakistan|Nepal|UK|Bangladesh|Philippines|Spain|Albania|Thailand|Lebanon|Qatar)/i.test(c)) ?? null;
     const skills = cells.find((c) => c.includes(";") && c.length > 10) ?? null;
@@ -172,8 +60,6 @@ export function parseMatchInviteResults(html: string): MatchInviteResult[] {
 
 /**
  * The eleven Computer-specialist career codes under "IT and Math" (15-1000).
- * Iterating these on every discovery run gets us broad coverage across
- * software/AI/data roles.
  */
 export const COMPUTER_SPECIALIST_CAREERS: Array<{ code: string; label: string }> = [
   { code: "15-1111", label: "Computer and Information Research Scientists" },
@@ -190,9 +76,9 @@ export const COMPUTER_SPECIALIST_CAREERS: Array<{ code: string; label: string }>
 ];
 
 /**
- * Keyword sets to rotate through. Each combined with all 11 career codes
- * yields ~25-50 results per search; total per discovery run after dedup
- * lands in the 800-1500 unique-talent range.
+ * Free-text keyword sets layered on top of each career SOC. Combined with
+ * 11 careers gives 55 (career × keyword) discovery cells; the cron rotates
+ * through them to keep surfacing fresh candidates.
  */
 export const TALENT_KEYWORD_SETS: Array<{ tag: string; keywords: string }> = [
   { tag: "ai-ml-cs", keywords: "EAL, qualified AI/ML/Data Science/Computer Science professionals" },

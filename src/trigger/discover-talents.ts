@@ -1,14 +1,6 @@
 import { logger, schedules } from "@trigger.dev/sdk";
 import { CONFIG } from "../lib/config.js";
 import {
-  fetchMatchInviteFormState,
-  fetchMatchInviteFormStateDebug,
-  searchMatchInvite,
-  parseMatchInviteResults,
-  COMPUTER_SPECIALIST_CAREERS,
-  TALENT_KEYWORD_SETS,
-} from "../lib/match-invite.js";
-import {
   appendToTalentQueue,
   getKnownTalentIds,
   isPaused,
@@ -16,22 +8,29 @@ import {
   TalentQueueAppendItem,
 } from "../lib/sheets.js";
 import { sendTelegramAlert } from "../lib/telegram.js";
-import { sleep } from "../lib/fetcher.js";
 import { CookieExpiredError } from "../lib/fetcher.js";
+import {
+  pickDiscoverySpecs,
+  runDiscoverySession,
+} from "../lib/talent-discovery-browser.js";
 
 /**
- * Daily 5am Lagos discovery cron. Iterates keyword × career combinations
- * (5 keyword sets × 11 career codes = 55 searches), POSTs each to
- * /emp/match.aspx, extracts candidate URLs, dedups, queues new ones.
+ * Headless-Chromium discovery cron. Each tick logs in via
+ * MYVISAJOBS_TALENT_COOKIE, runs CONFIG.TALENT_DISCOVERY_SEARCHES_PER_RUN
+ * Match-and-Invite searches, and queues new candidate URLs into Talent_Queue.
  *
- * Theoretical max ~25 results per search × 55 = 1,375. After cross-search
- * dedup typically lands at ~800-1,200 unique new talents per run.
+ * Stateless rotation: the (career × keyword) slot is derived from the run
+ * timestamp, so consecutive runs cover different filter combinations and
+ * eventually wrap through the full grid (11 careers × 5 keyword sets = 55).
+ *
+ * Scheduled every 4 hours; at 10 searches/run that's 60/day — full grid
+ * cycled in ~22 hours.
  */
 export const discoverTalents = schedules.task({
   id: "myvisajobs.discover-talents",
-  cron: { pattern: "0 5 * * *", timezone: CONFIG.TIMEZONE },
+  cron: { pattern: "0 */4 * * *", timezone: CONFIG.TIMEZONE },
   maxDuration: 1500,
-  run: async () => {
+  run: async (payload) => {
     logger.info("discover-talents tick");
 
     if (await isPaused()) {
@@ -39,149 +38,74 @@ export const discoverTalents = schedules.task({
       return { added: 0, paused: true };
     }
 
+    // Derive a deterministic rotation slot from the scheduled run time —
+    // wraps the (career × keyword) grid every ~22 hours at 10 searches/run.
+    const baseTime = payload.timestamp instanceof Date ? payload.timestamp : new Date();
+    const slot = Math.floor(baseTime.getTime() / (1000 * 60 * 60 * 4));
+    const specs = pickDiscoverySpecs(slot, CONFIG.TALENT_DISCOVERY_SEARCHES_PER_RUN);
+
     const known = await getKnownTalentIds();
+
+    let session;
+    try {
+      session = await runDiscoverySession(specs);
+    } catch (err) {
+      if (err instanceof CookieExpiredError) {
+        await sendTelegramAlert(
+          "critical",
+          "MYVISAJOBS_TALENT_COOKIE expired (discovery)",
+          "Headless discovery hit a sign-in page. Refresh MYVISAJOBS_TALENT_COOKIE on Trigger.dev.",
+        );
+        return { added: 0, totalSeen: 0, totalFailed: specs.length, cookieExpired: true };
+      }
+      throw err;
+    }
+
+    const seenInRun = new Set<string>();
     const toQueue: TalentQueueAppendItem[] = [];
-    const queuedThisRun = new Set<string>();
-    let totalSeen = 0;
-    let searchesFailed = 0;
-
-    // Diagnostic — surface why discovery yields 0 if it does. Returned in
-    // the task output so it shows up in the Trigger.dev dashboard.
-    const cookie = process.env.MYVISAJOBS_TALENT_COOKIE ?? "";
-    const debug: Record<string, unknown> = {
-      cookiePresent: cookie.length > 0,
-      cookieLength: cookie.length,
-      cookieHasAspSession: cookie.includes("ASP.NET_SessionId"),
-      cookieHasYourAppName: cookie.includes("yourAppName"),
-      cookieHasQVWROLES: cookie.includes("QVWROLES"),
-    };
-
-    let firstSearchDone = false;
-    // One-time GET diagnostic so we can see what the empty form looks like.
-    try {
-      const dbg = await fetchMatchInviteFormStateDebug();
-      debug.getResponseTitle = dbg.title;
-      debug.getResponseHtmlLength = dbg.html.length;
-      debug.getResponseHasMatchForm = /MainContent\$ddlOccupations/.test(dbg.html);
-      debug.getResponseHiddenFields = dbg.hiddenInputs.map((h) => `${h.name}(${h.valueLength})`).join(", ");
-      debug.getResponseHtmlHead = dbg.html.slice(0, 800);
-    } catch (err) {
-      debug.getDiagnosticError = err instanceof Error ? err.message : String(err);
-    }
-    // Cookie chain diagnostic — verify env var update + Set-Cookie capture.
-    try {
-      const { fetchTalentPageWithCookies } = await import("../lib/talent-fetcher.js");
-      const r = await fetchTalentPageWithCookies("https://www.myvisajobs.com/emp/hiring/match.aspx");
-      const envQv = (cookie.match(/QVWROLES=([^;]+)/)?.[1] ?? "").slice(0, 24);
-      const setCookieNames = r.setCookies.map((sc) => sc.split(";")[0].split("=")[0]).join(",");
-      const setQv = r.setCookies
-        .find((sc) => sc.startsWith("QVWROLES="))
-        ?.split(";")[0].slice(9, 33);
-      debug.envQVWROLESPrefix = envQv;
-      debug.getReturnedSetCookieCount = r.setCookies.length;
-      debug.getReturnedSetCookieNames = setCookieNames;
-      debug.getReturnedQVWROLESPrefix = setQv ?? "(none)";
-    } catch (err) {
-      debug.cookieChainDiagnosticError = err instanceof Error ? err.message : String(err);
-    }
-    for (const kw of TALENT_KEYWORD_SETS) {
-      for (const career of COMPUTER_SPECIALIST_CAREERS) {
-        await sleep(800 + Math.random() * 800);
-        try {
-          const html = await searchMatchInvite({
-            keywords: kw.keywords,
-            occupation: CONFIG.TALENT_OCCUPATION,
-            suboccupation: CONFIG.TALENT_SUBOCCUPATION,
-            career: career.code,
-          });
-          if (!firstSearchDone) {
-            debug.formStateOk = true;
-            debug.viewStateLength = -1;
-            debug.viewStateGeneratorPresent = true;
-          }
-          const results = parseMatchInviteResults(html);
-          totalSeen += results.length;
-
-          // Capture details from the very first search so we can debug.
-          if (!firstSearchDone) {
-            firstSearchDone = true;
-            debug.firstSearchKeyword = kw.tag;
-            debug.firstSearchCareer = career.code;
-            debug.firstSearchHtmlLength = html.length;
-            debug.firstSearchResults = results.length;
-            debug.firstSearchHtmlHeadSnippet = html.slice(0, 600);
-            debug.firstSearchHtmlBodyStart = html.slice(2000, 2600);
-            debug.firstSearchHtmlBodyMid = html.slice(20000, 20600);
-            debug.firstSearchHasCandidateLinks = /\/candidate\//i.test(html);
-            debug.firstSearchHasSignInIndicator = /Sign\s*In|signin\.aspx/i.test(html);
-            debug.firstSearchHasUpgradePrompt = /upgrade|premium\s*employer/i.test(html);
-            debug.firstSearchHasResultsTable = /<table[^>]*>[\s\S]*?<a[^>]*\/candidate\//i.test(html);
-            debug.firstSearchTitle = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
-            debug.firstSearchHasErrorMsg = /error|exception|invalid|failed/i.test(html.slice(0, 5000));
-            debug.firstSearchHasMatchedText = /matched\s+\d+\s+candidate|Our system matched/i.test(html);
-            debug.firstSearchHasGenericServerError = /Page\s+Temporarily\s+Unavailable|System is taking a break/i.test(html);
-            logger.info("First match-invite search debug", debug);
-          }
-
-          for (const r of results) {
-            if (known.has(r.talentId) || queuedThisRun.has(r.talentId)) continue;
-            queuedThisRun.add(r.talentId);
-            toQueue.push({
-              talentId: r.talentId,
-              profileUrl: r.profileUrl,
-              discoverySource: `match:${kw.tag}:${career.code}`,
-            });
-          }
-        } catch (err) {
-          searchesFailed++;
-          if (err instanceof CookieExpiredError) {
-            await sendTelegramAlert(
-              "critical",
-              "MYVISAJOBS_TALENT_COOKIE expired (discovery)",
-              `Match and Invite returned a sign-in page during discovery. Refresh MYVISAJOBS_TALENT_COOKIE.`,
-            );
-            // Don't keep retrying once the cookie is dead
-            throw err;
-          }
-          logger.warn("match-invite search failed", {
-            kw: kw.tag,
-            career: career.code,
-            err: err instanceof Error ? err.message : String(err),
-          });
-        }
+    for (const outcome of session.outcomes) {
+      for (const r of outcome.results) {
+        if (known.has(r.talentId) || seenInRun.has(r.talentId)) continue;
+        seenInRun.add(r.talentId);
+        toQueue.push({
+          talentId: r.talentId,
+          profileUrl: r.profileUrl,
+          discoverySource: `match:${outcome.spec.keywords.tag}:${outcome.spec.career.code}`,
+        });
       }
     }
 
-    if (toQueue.length === 0) {
-      logger.info("Discovery yielded 0 new talents", { totalSeen, searchesFailed, debug });
-      await updateDashboard({
-        lastRun: new Date().toISOString(),
-        lastRunStatus: `talent-discovery: 0 new (${totalSeen} seen)`,
-      });
-      return { added: 0, totalSeen, searchesFailed, debug };
+    if (toQueue.length > 0) {
+      await appendToTalentQueue(toQueue);
     }
 
-    await appendToTalentQueue(toQueue);
-
-    if (searchesFailed > TALENT_KEYWORD_SETS.length * COMPUTER_SPECIALIST_CAREERS.length * 0.3) {
+    if (session.totalFailed > specs.length * 0.4) {
       await sendTelegramAlert(
         "warning",
-        "Talent discovery: many searches failing",
-        `${searchesFailed} of ${TALENT_KEYWORD_SETS.length * COMPUTER_SPECIALIST_CAREERS.length} match-invite searches failed. Check logs.`,
+        "Talent discovery: many searches failed",
+        `${session.totalFailed}/${specs.length} headless searches failed this tick.`,
       );
     }
 
     await updateDashboard({
       lastRun: new Date().toISOString(),
-      lastRunStatus: `talent-discovery: +${toQueue.length} queued (${totalSeen} seen)`,
+      lastRunStatus: `talent-discovery: +${toQueue.length} queued (${session.totalSeen} seen, ${session.totalFailed} failed)`,
     });
 
     logger.info("discover-talents complete", {
+      slot,
+      searches: specs.length,
       queued: toQueue.length,
-      totalSeen,
-      searchesFailed,
+      totalSeen: session.totalSeen,
+      totalFailed: session.totalFailed,
     });
 
-    return { added: toQueue.length, totalSeen, searchesFailed, debug };
+    return {
+      added: toQueue.length,
+      totalSeen: session.totalSeen,
+      totalFailed: session.totalFailed,
+      slot,
+      searches: specs.length,
+    };
   },
 });
