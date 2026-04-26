@@ -52,8 +52,10 @@ export function parseTalentProfile(
 
   // Phone, Email — appear in the top profile block as "Phone: ..." and "Email: ..."
   // Multiple places: top of profile + sidebar "More About". Either has the same value.
-  out.phone = pickAfter(pageText, /Phone:\s*([^\s|<]+(?:\s*[^\s|<]+)?)/i, 50);
-  out.email = pickAfter(pageText, /Email:\s*([^\s|<]+@[^\s|<]+)/i, 80);
+  // Phone regex restricted to phone-shaped chars so we don't capture the next "Email:"
+  // label when the Phone field is empty.
+  out.phone = extractPhone(pageText);
+  out.email = pickAfter(pageText, /Email:\s*([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/i, 80);
 
   // Looking For (target roles) — labeled bullet
   if (!out.lookingFor) out.lookingFor = pickAfter(pageText, /Looking\s*For:\s*([^\.\n]+?)(?=\s+Occupation:|$)/i, 200);
@@ -141,6 +143,16 @@ function pickAfter(text: string, re: RegExp, maxLen: number): string | null {
   const v = m[1].trim();
   if (!v || v.length < 1) return null;
   return v.slice(0, maxLen);
+}
+
+function extractPhone(text: string): string | null {
+  const m = text.match(/Phone:\s*([+\d(][\d\s().+-]{5,30})/i);
+  if (!m) return null;
+  const candidate = m[1].trim().replace(/[\s.\-]+$/, "");
+  const digitCount = (candidate.match(/\d/g) ?? []).length;
+  if (digitCount < 7) return null;
+  if (/^\d+\.\d+e[+-]?\d+$/i.test(candidate)) return null;
+  return candidate;
 }
 
 function htmlToText(html: string): string {
