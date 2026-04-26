@@ -91,6 +91,9 @@ export async function runDiscoverySession(
   const outcomes: DiscoverySearchOutcome[] = [];
   let totalSeen = 0;
   let totalFailed = 0;
+  // Recycle the page every N searches to release accumulated DOM/JS heap
+  // (cookies live on the BrowserContext so a fresh page stays authenticated).
+  const PAGE_RECYCLE_EVERY = 10;
 
   try {
     browser = await chromium.launch({
@@ -105,7 +108,12 @@ export async function runDiscoverySession(
     await context.addCookies(parseCookieHeader(cookie));
     page = await context.newPage();
 
-    for (const spec of specs) {
+    for (let i = 0; i < specs.length; i++) {
+      const spec = specs[i];
+      if (i > 0 && i % PAGE_RECYCLE_EVERY === 0) {
+        await page.close().catch(() => {});
+        page = await context.newPage();
+      }
       try {
         const html = await runOneSearch(page, spec);
         const results = parseMatchInviteResults(html);
