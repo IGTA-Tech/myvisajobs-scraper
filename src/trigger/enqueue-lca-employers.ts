@@ -25,6 +25,15 @@ export const enqueueLcaEmployers = schedules.task({
   run: async () => {
     logger.info("enqueue-lca-employers tick");
 
+    // Env-var kill switch — set LCA_CLOUD_DISABLED=true on Trigger.dev to
+    // stop the cloud LCA cron without redeploying. Used because /h1b-visa/
+    // lcafull.aspx is IP-gated and cloud always returns empty content;
+    // local scripts/scrape-lcas-locally.mjs handles LCA scraping instead.
+    if (process.env.LCA_CLOUD_DISABLED === "true") {
+      logger.info("LCA cloud cron disabled via LCA_CLOUD_DISABLED env var");
+      return { processed: 0, disabled: true };
+    }
+
     if (await isPaused()) {
       logger.info("Paused via Control sheet");
       return { processed: 0, paused: true };
