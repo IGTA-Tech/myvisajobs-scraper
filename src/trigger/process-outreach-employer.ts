@@ -36,11 +36,15 @@ export const processOutreachEmployer = task({
     const { rowNumber, rank, companyName, email } = payload;
     logger.info("Processing outreach employer", { rowNumber, companyName });
 
-    // 1. Fetch myvisajobs current fiscal year search (free — native fetch + cookie)
-    const currentYear = new Date().getUTCFullYear() + 1; // US fiscal year runs Oct-Sep; bias to latest FY
+    // 1. Fetch myvisajobs LCA listings across the last 4 fiscal years.
+    // Two-year window missed Phase-2 IA-overflow employers whose only recent
+    // LCAs were 2024-2025; widened to 4 years gets them surfaced.
+    const baseYear = new Date().getUTCFullYear() + 1; // US fiscal year runs Oct-Sep; bias to latest FY
     const urls = [
-      buildCompanySearchUrl(companyName, currentYear),
-      buildCompanySearchUrl(companyName, currentYear - 1),
+      buildCompanySearchUrl(companyName, baseYear),
+      buildCompanySearchUrl(companyName, baseYear - 1),
+      buildCompanySearchUrl(companyName, baseYear - 2),
+      buildCompanySearchUrl(companyName, baseYear - 3),
     ];
 
     const allListings: MyVisaJobsListingItem[] = [];
@@ -66,7 +70,10 @@ export const processOutreachEmployer = task({
     }
 
     if (allListings.length === 0) {
-      logger.info("No jobs found for company on myvisajobs", { companyName });
+      logger.info("No jobs found for company on myvisajobs", {
+        companyName,
+        yearsTried: urls.length,
+      });
       return {
         company: companyName,
         jobsFound: 0,
