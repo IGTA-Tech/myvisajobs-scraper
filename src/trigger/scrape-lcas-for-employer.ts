@@ -1,6 +1,7 @@
 import { logger, task } from "@trigger.dev/sdk";
 import {
-  fetchEmployerPage,
+  createSessionJar,
+  fetchEmployerPageWithSession,
   RateLimitError,
   CookieExpiredError,
   isLoggedOut,
@@ -55,6 +56,11 @@ export const scrapeLcasForEmployer = task({
     const freshnessCutoffMs =
       Date.now() - CONFIG.LCA_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 
+    // Session jar — myvisajobs rolls QVWROLES on every response; we need to
+    // capture and forward each Set-Cookie so subsequent requests stay
+    // authenticated for premium content.
+    const session = createSessionJar();
+
     const allRows: LCAContact[] = [];
     let lcasFound = 0;
     let skipped = 0;
@@ -74,7 +80,7 @@ export const scrapeLcasForEmployer = task({
       const listingUrl = `${BASE}/h1b/search.aspx?e=${encodeURIComponent(slug)}&st=certified&y=${year}`;
       let listingHtml: string;
       try {
-        listingHtml = await fetchEmployerPage(listingUrl);
+        listingHtml = await fetchEmployerPageWithSession(listingUrl, session);
       } catch (err) {
         errors++;
         if (err instanceof RateLimitError) {
@@ -112,7 +118,7 @@ export const scrapeLcasForEmployer = task({
 
         let detailHtml: string;
         try {
-          detailHtml = await fetchEmployerPage(ref.url);
+          detailHtml = await fetchEmployerPageWithSession(ref.url, session);
         } catch (err) {
           errors++;
           if (err instanceof RateLimitError) throw err;

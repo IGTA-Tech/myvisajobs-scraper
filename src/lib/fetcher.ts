@@ -56,6 +56,80 @@ export async function fetchEmployerPage(url: string): Promise<string> {
   return await res.text();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Session-aware fetching
+//
+// myvisajobs rotates QVWROLES (and possibly other auth cookies) on EVERY
+// response with Set-Cookie + HttpOnly. A single env-var cookie value works
+// for the first request, but subsequent requests sending the same value get
+// degraded "logged-in but no premium" content. The caller must thread a
+// CookieJar through related requests so each one sends the latest rolled
+// value the server issued on the prior response.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type CookieJar = Map<string, string>;
+
+export function createSessionJar(): CookieJar {
+  const jar: CookieJar = new Map();
+  const env = process.env.MYVISAJOBS_COOKIE ?? "";
+  for (const pair of env.split(/;\s*/)) {
+    if (!pair) continue;
+    const eq = pair.indexOf("=");
+    if (eq > 0) {
+      jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1));
+    }
+  }
+  return jar;
+}
+
+function jarToCookieHeader(jar: CookieJar): string {
+  return Array.from(jar.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+}
+
+function updateJarFromResponse(jar: CookieJar, res: Response): void {
+  const headers = res.headers as Headers & { getSetCookie?: () => string[] };
+  let setCookies: string[] = [];
+  if (typeof headers.getSetCookie === "function") {
+    setCookies = headers.getSetCookie();
+  } else {
+    const single = res.headers.get("set-cookie");
+    if (single) setCookies = [single];
+  }
+  for (const sc of setCookies) {
+    const pair = sc.split(";")[0].trim();
+    const eq = pair.indexOf("=");
+    if (eq > 0) {
+      const name = pair.slice(0, eq).trim();
+      const value = pair.slice(eq + 1);
+      if (name) jar.set(name, value); // REPLACE rolled cookies, don't skip
+    }
+  }
+}
+
+/**
+ * Like fetchEmployerPage but threads a CookieJar across requests so
+ * server-issued Set-Cookie values (rolled QVWROLES, etc.) carry forward.
+ * Use one jar per task-run.
+ */
+export async function fetchEmployerPageWithSession(
+  url: string,
+  jar: CookieJar,
+): Promise<string> {
+  const headers = buildHeaders();
+  headers["Cookie"] = jarToCookieHeader(jar);
+  const res = await fetch(url, { headers, redirect: "follow" });
+  updateJarFromResponse(jar, res);
+  if (res.status === 429 || res.status === 403) {
+    throw new RateLimitError(res.status);
+  }
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} fetching ${url}`);
+  }
+  return await res.text();
+}
+
 /**
  * Returns true if the HTML shows we're logged out (contact data gated).
  * The logged-in view replaces the "Premium Member Only" placeholder with real emails/phones.
