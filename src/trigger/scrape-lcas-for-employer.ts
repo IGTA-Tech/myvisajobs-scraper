@@ -1,13 +1,16 @@
 import { logger, task } from "@trigger.dev/sdk";
 import {
-  createSessionJar,
-  fetchEmployerPageWithSession,
   RateLimitError,
   CookieExpiredError,
   isLoggedOut,
   sleep,
   jitterDelay,
 } from "../lib/fetcher.js";
+import {
+  openMyvisajobsSession,
+  closeMyvisajobsSession,
+  fetchPageInBrowser,
+} from "../lib/browser-fetcher.js";
 import { extractLcaIdsFromListing, parseLcaDetailHtml } from "../lib/lca-parser.js";
 import { LCAContact, LCAContactSchema } from "../lib/schema.js";
 import { CONFIG } from "../lib/config.js";
@@ -40,8 +43,9 @@ const BASE = "https://www.myvisajobs.com";
 
 export const scrapeLcasForEmployer = task({
   id: "myvisajobs.scrape-lcas-for-employer",
-  queue: { concurrencyLimit: 10 },
-  maxDuration: 1200,
+  queue: { concurrencyLimit: 5 },
+  maxDuration: 1500,
+  machine: "medium-1x",
   retry: {
     maxAttempts: 2,
     minTimeoutInMs: 3000,
@@ -56,10 +60,11 @@ export const scrapeLcasForEmployer = task({
     const freshnessCutoffMs =
       Date.now() - CONFIG.LCA_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 
-    // Session jar — myvisajobs rolls QVWROLES on every response; we need to
-    // capture and forward each Set-Cookie so subsequent requests stay
-    // authenticated for premium content.
-    const session = createSessionJar();
+    // Headless Chromium — myvisajobs's /h1b-visa/lcafull.aspx requires the
+    // full browser fingerprint (TLS, HTTP/2, native cookie rolling). Native
+    // fetch + static env-var cookie returns degraded empty content even
+    // with Chrome 147 header parity and a session jar.
+    const browserSession = await openMyvisajobsSession();
 
     const allRows: LCAContact[] = [];
     let lcasFound = 0;
@@ -69,6 +74,7 @@ export const scrapeLcasForEmployer = task({
     let emptyParses = 0;
     let attempted = 0;
 
+    try {
     for (const year of CONFIG.LCA_YEARS) {
       // Skip year if we've already done it for this employer
       if (scrapedKeys.has(`${slug}::${year}`)) {
@@ -80,7 +86,7 @@ export const scrapeLcasForEmployer = task({
       const listingUrl = `${BASE}/h1b/search.aspx?e=${encodeURIComponent(slug)}&st=certified&y=${year}`;
       let listingHtml: string;
       try {
-        listingHtml = await fetchEmployerPageWithSession(listingUrl, session);
+        listingHtml = await fetchPageInBrowser(browserSession, listingUrl);
       } catch (err) {
         errors++;
         if (err instanceof RateLimitError) {
@@ -118,7 +124,7 @@ export const scrapeLcasForEmployer = task({
 
         let detailHtml: string;
         try {
-          detailHtml = await fetchEmployerPageWithSession(ref.url, session);
+          detailHtml = await fetchPageInBrowser(browserSession, ref.url);
         } catch (err) {
           errors++;
           if (err instanceof RateLimitError) throw err;
@@ -188,6 +194,10 @@ export const scrapeLcasForEmployer = task({
         allRows.push(validated.data);
         scrapedKeys.add(ref.id);
       }
+    }
+    } finally {
+      // Always release Chromium even on partial failure
+      await closeMyvisajobsSession(browserSession);
     }
 
     // If the cookie was degraded mid-batch, every fetch returned an empty
