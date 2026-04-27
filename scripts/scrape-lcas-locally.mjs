@@ -25,7 +25,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { load as loadHtml } from "cheerio";
-import { google } from "@googleapis/sheets";
+import { sheets as sheetsApi } from "@googleapis/sheets";
 import { JWT } from "google-auth-library";
 
 // Auto-load .env.local if present (gitignored). Lines like KEY=value with
@@ -92,7 +92,7 @@ const auth = new JWT({
   key: sa.private_key,
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
-const sheets = google.sheets({ version: "v4", auth });
+const sheets = sheetsApi({ version: "v4", auth });
 
 // ── HTTP fetch with browser-like headers ──────────────────────────────────
 function buildHeaders() {
@@ -112,11 +112,20 @@ function buildHeaders() {
   };
 }
 
-async function fetchPage(url) {
-  const res = await fetch(url, { headers: buildHeaders(), redirect: "follow" });
-  if (res.status === 429 || res.status === 403) throw new Error(`rate-limited ${res.status} on ${url}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`);
-  return await res.text();
+async function fetchPage(url, attempts = 3) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url, { headers: buildHeaders(), redirect: "follow" });
+      if (res.status === 429 || res.status === 403) throw new Error(`rate-limited ${res.status} on ${url}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`);
+      return await res.text();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) await sleep(1500 * (i + 1)); // 1.5s, 3s
+    }
+  }
+  throw lastErr;
 }
 
 function isLoggedOut(html) {
@@ -490,6 +499,8 @@ async function scrapeEmployer(emp, scrapedKeys) {
   let lcasFound = 0;
   let emptyParses = 0;
   let attempted = 0;
+  let listingErrors = 0;
+  let detailErrors = 0;
   const freshnessCutoffMs = Date.now() - LCA_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 
   for (const year of LCA_YEARS) {
@@ -500,6 +511,7 @@ async function scrapeEmployer(emp, scrapedKeys) {
     try {
       listingHtml = await fetchPage(listingUrl);
     } catch (err) {
+      listingErrors++;
       console.warn(`  [${emp.slug}] listing ${year} fetch failed: ${err.message}`);
       continue;
     }
@@ -519,6 +531,7 @@ async function scrapeEmployer(emp, scrapedKeys) {
       try {
         html = await fetchPage(ref.url);
       } catch (err) {
+        detailErrors++;
         console.warn(`  [${emp.slug}] LCA ${ref.id} fetch failed: ${err.message}`);
         continue;
       }
@@ -562,7 +575,7 @@ async function scrapeEmployer(emp, scrapedKeys) {
     process.exit(2);
   }
 
-  return { allRows, lcasFound, emptyParses, attempted };
+  return { allRows, lcasFound, emptyParses, attempted, listingErrors, detailErrors };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────
@@ -584,8 +597,11 @@ async function main() {
     const emp = employers[i];
     console.log(`\n[${i + 1}/${employers.length}] ${emp.slug} (rank ${emp.visaRank})`);
     try {
-      const { allRows, lcasFound, emptyParses, attempted } = await scrapeEmployer(emp, scrapedKeys);
-      console.log(`  found=${lcasFound} parsed=${allRows.length} empty=${emptyParses}/${attempted}`);
+      const { allRows, lcasFound, emptyParses, attempted, listingErrors, detailErrors } =
+        await scrapeEmployer(emp, scrapedKeys);
+      console.log(
+        `  found=${lcasFound} parsed=${allRows.length} empty=${emptyParses}/${attempted} listingErr=${listingErrors} detailErr=${detailErrors}`,
+      );
 
       // Jobs: one row per LCA, dedup by lcaId
       const newJobs = allRows.filter((r) => !existingJobIds.has(r.lcaId));
@@ -608,8 +624,16 @@ async function main() {
       const contactsWritten = await appendLcaContacts(toWrite);
       totalContacts += contactsWritten;
 
-      await markEmployerScraped(emp.rowNumber, emp.lcaScrapedColIdx);
-      console.log(`  wrote ${jobsWritten} job rows, ${contactsWritten} contact rows. Marked LCAs_Last_Scraped.`);
+      // Only mark LCAs_Last_Scraped if we ACTUALLY scraped something successfully.
+      // Marking on failed listings would prevent retry for 90 days. The cron
+      // schedule will re-pick employers with empty LCAs_Last_Scraped.
+      const scrapeWasUseful = lcasFound > 0 && listingErrors < LCA_YEARS.length;
+      if (scrapeWasUseful) {
+        await markEmployerScraped(emp.rowNumber, emp.lcaScrapedColIdx);
+        console.log(`  wrote ${jobsWritten} job rows, ${contactsWritten} contact rows. Marked LCAs_Last_Scraped.`);
+      } else {
+        console.log(`  wrote ${jobsWritten} job rows, ${contactsWritten} contact rows. Skipped marking (will retry).`);
+      }
     } catch (err) {
       console.error(`  [${emp.slug}] aborted: ${err.message}`);
     }
