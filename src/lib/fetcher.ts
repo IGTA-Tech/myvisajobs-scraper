@@ -15,11 +15,26 @@ export class CookieExpiredError extends Error {
 }
 
 function buildHeaders(): Record<string, string> {
+  // Mirror Chrome 147's full request fingerprint. myvisajobs degrades premium
+  // content (LCA Section D, etc.) to empty when the headers don't match a
+  // browser-shaped fingerprint, even with a valid premium cookie. The minimal
+  // header set we used to send was passing for non-LCA pages but failing on
+  // /h1b-visa/lcafull.aspx — captured via DevTools to confirm parity.
   const headers: Record<string, string> = {
-    "User-Agent": CONFIG.USER_AGENT,
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    Accept:
+      "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Language": "en-US,en;q=0.9",
-    "Cache-Control": "no-cache",
+    "Cache-Control": "max-age=0",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Sec-Ch-Ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
   };
   const cookie = process.env.MYVISAJOBS_COOKIE;
   if (cookie) headers["Cookie"] = cookie;
