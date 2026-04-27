@@ -60,6 +60,8 @@ export const scrapeLcasForEmployer = task({
     let skipped = 0;
     let skippedStale = 0;
     let errors = 0;
+    let emptyParses = 0;
+    let attempted = 0;
 
     for (const year of CONFIG.LCA_YEARS) {
       // Skip year if we've already done it for this employer
@@ -128,6 +130,7 @@ export const scrapeLcasForEmployer = task({
           throw new CookieExpiredError();
         }
 
+        attempted++;
         const parsed = parseLcaDetailHtml(detailHtml, {
           lcaId: ref.id,
           year: ref.year,
@@ -135,6 +138,27 @@ export const scrapeLcasForEmployer = task({
           employerSlug: slug,
         });
         if (!parsed.employerName) parsed.employerName = employerName;
+
+        // Reject empty parses — cookie-degraded responses have LCA-shaped HTML
+        // but our summary-table + section-block extractors return nothing.
+        // Without this gate, every degraded fetch silently writes a row with
+        // only metadata (LCA_ID, slug, year, URL) and all parser fields null.
+        const hasMeaningfulContent =
+          !!(parsed.caseStatus ||
+            parsed.caseNumber ||
+            parsed.jobTitle ||
+            parsed.contactEmail ||
+            parsed.contactLastName ||
+            parsed.workCity);
+        if (!hasMeaningfulContent) {
+          emptyParses++;
+          errors++;
+          logger.warn("LCA parse returned empty — cookie may be degraded", {
+            id: ref.id,
+            year: ref.year,
+          });
+          continue;
+        }
 
         const validated = LCAContactSchema.safeParse(parsed);
         if (!validated.success) {
@@ -158,6 +182,18 @@ export const scrapeLcasForEmployer = task({
         allRows.push(validated.data);
         scrapedKeys.add(ref.id);
       }
+    }
+
+    // If the cookie was degraded mid-batch, every fetch returned an empty
+    // LCA shell. Surface this loudly — silently passing back zero rows used
+    // to look the same as "no LCAs for this employer", which masked ~1300
+    // junk rows getting written before this gate existed.
+    if (attempted > 0 && emptyParses / attempted >= 0.5) {
+      await sendTelegramAlert(
+        "critical",
+        "MyVisaJobs cookie likely degraded (LCA)",
+        `Slug ${slug}: ${emptyParses}/${attempted} LCAs returned empty page content. Refresh MYVISAJOBS_COOKIE — make sure it's the premium-tier candidate-side cookie.`,
+      );
     }
 
     // 3a. Jobs tab: append ONE row per LCA (no email dedup). Dedup by LCA ID
