@@ -25,12 +25,13 @@ export const enqueueLcaEmployers = schedules.task({
   run: async () => {
     logger.info("enqueue-lca-employers tick");
 
-    // Env-var kill switch — set LCA_CLOUD_DISABLED=true on Trigger.dev to
-    // stop the cloud LCA cron without redeploying. Used because /h1b-visa/
-    // lcafull.aspx is IP-gated and cloud always returns empty content;
-    // local scripts/scrape-lcas-locally.mjs handles LCA scraping instead.
-    if (process.env.LCA_CLOUD_DISABLED === "true") {
-      logger.info("LCA cloud cron disabled via LCA_CLOUD_DISABLED env var");
+    // Hardcoded kill switch — myvisajobs IP-gates /h1b-visa/lcafull.aspx,
+    // cloud always returns empty content. LCA scraping moved to local
+    // scripts/scrape-lcas-locally.mjs (residential IP). To re-enable the
+    // cloud path (e.g., once a residential proxy is wired up), set
+    // LCA_CLOUD_ENABLED=true and remove this guard.
+    if (process.env.LCA_CLOUD_ENABLED !== "true") {
+      logger.info("LCA cloud cron disabled — local script handles scraping");
       return { processed: 0, disabled: true };
     }
 
